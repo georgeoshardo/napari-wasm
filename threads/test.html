@@ -6,9 +6,11 @@
   <style>
     body { font: 13px/1.5 ui-monospace, monospace; margin: 16px; background: #fff; color: #222; }
     #log { white-space: pre-wrap; }
+    #qt-container { width: 800px; height: 400px; border: 1px solid #bbb; }
   </style>
 </head>
 <body>
+  <div id="qt-container"></div>
   <div id="log"></div>
   <script type="module">
     // Runs threads/test.py (or ?script=<name>) in the threaded Pyodide. Needs a server sending the
@@ -25,6 +27,7 @@
         stderr: log,
       });
       window.pyodide = pyodide;
+      pyodide._module.qtContainerElements = [document.getElementById("qt-container")];
       log(`Pyodide ${pyodide.version} loaded`);
       await pyodide.loadPackage("numpy", { messageCallback: log });
       const script = new URLSearchParams(location.search).get("script") || "test";

@@ -8,6 +8,8 @@
 #include <sched.h>
 #include <pthread.h>
 
+/* A threaded build (-pthread) gets the real ones from Emscripten's libc. */
+#ifndef __EMSCRIPTEN_PTHREADS__
 int pthread_setschedparam(pthread_t thread, int policy,
                           const struct sched_param *param) {
     (void)thread; (void)policy; (void)param;
@@ -28,6 +30,7 @@ int sem_timedwait(sem_t *sem, const struct timespec *abs_timeout) {
     (void)sem; (void)abs_timeout;
     return -1;
 }
+#endif
 
 /* IndexedDB stubs — Qt uses these for persistent storage but they require
  * Emscripten's ASYNCIFY or Emscripten-provided JS implementations.

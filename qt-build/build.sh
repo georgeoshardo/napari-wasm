@@ -16,7 +16,10 @@ set -euo pipefail
 # =============================================================================
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BUILD_DIR="$ROOT_DIR/build"
+# Overrides for a threaded build (see ../threads): THREADS=1 builds Qt and
+# PyQt6 with threads; BUILD_DIR, QT_SRC and PYODIDE_SRC point elsewhere.
+THREADS="${THREADS:-0}"
+BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build}"
 SOURCES_DIR="$BUILD_DIR/sources"
 PATCHES_DIR="$ROOT_DIR/patches"
 OUTPUT_DIR="$BUILD_DIR/output"
@@ -30,11 +33,22 @@ PYQT6_SIP_VERSION="13.11.0"
 PYODIDE_VERSION="0.29.3"  # branch or tag to clone
 
 # Derived paths
-QT_SRC="$SOURCES_DIR/qt6"
+QT_SRC="${QT_SRC:-$SOURCES_DIR/qt6}"
 QT_INSTALL="$BUILD_DIR/qt6-wasm"
 PYQT6_SRC="$SOURCES_DIR/pyqt6-${PYQT6_VERSION}"
 SIP_SRC="$SOURCES_DIR/sip-${SIP_VERSION}"
-PYODIDE_SRC="$SOURCES_DIR/pyodide"
+PYODIDE_SRC="${PYODIDE_SRC:-$SOURCES_DIR/pyodide}"
+if [ "$THREADS" = 1 ]; then
+    QT_BUILD="$QT_SRC/build-wasm-threads"
+    QT_THREAD_FEATURE="-feature-thread"
+    PTHREAD_FLAG="-pthread"
+    PYQT_CORE_DISABLED="static,PyQt_Process,PyQt_Timezone,PyQt_SystemSemaphore"
+else
+    QT_BUILD="$QT_SRC/build-wasm"
+    QT_THREAD_FEATURE="-no-feature-thread"
+    PTHREAD_FLAG=""
+    PYQT_CORE_DISABLED="static,PyQt_Process,PyQt_Timezone,PyQt_SystemSemaphore,PyQt_Thread"
+fi
 PYODIDE_REPO="$PYODIDE_SRC"
 
 # ---- Helpers ----------------------------------------------------------------
@@ -111,16 +125,16 @@ build_qt() {
     fi
 
     # Configure
-    if [ ! -f "$QT_SRC/build-wasm/config.summary" ]; then
+    if [ ! -f "$QT_BUILD/config.summary" ]; then
         log "Configuring Qt6 for wasm-emscripten..."
-        mkdir -p "$QT_SRC/build-wasm"
-        pushd "$QT_SRC/build-wasm"
+        mkdir -p "$QT_BUILD"
+        pushd "$QT_BUILD"
         "$QT_SRC/configure" \
             -qt-host-path "$CONDA_PREFIX" \
             -platform wasm-emscripten \
             -static \
             -prefix "$QT_INSTALL" \
-            -no-feature-thread \
+            $QT_THREAD_FEATURE \
             -feature-wasm-exceptions \
             -opensource \
             -confirm-license \
@@ -132,7 +146,7 @@ build_qt() {
 
     # Build
     log "Building Qt6 (this will take a while)..."
-    pushd "$QT_SRC/build-wasm"
+    pushd "$QT_BUILD"
     cmake --build . --parallel
     cmake --install .
     popd
@@ -192,6 +206,8 @@ build_cpython() {
 
 # Get Pyodide's cross-compilation paths
 get_pyodide_paths() {
+    # read the flags of the Pyodide checkout this build links into
+    export PYODIDE_ROOT="$PYODIDE_REPO"
     PYODIDE_PYTHON_INCLUDE=$(pixi run pyodide config get python_include_dir)
     PYODIDE_PYTHON_LIB=$(dirname "$PYODIDE_PYTHON_INCLUDE")/../lib
     PYODIDE_CFLAGS=$(pixi run pyodide config get cflags)
@@ -261,7 +277,7 @@ build_pyqt_modules() {
     export QMAKE="$QT_INSTALL/bin/qmake6"
 
     # WASM cross-compilation: can't run config test executables on host.
-    export PYQT_WASM_FEATURES="QtCore=static,PyQt_Process,PyQt_Timezone,PyQt_SystemSemaphore,PyQt_Thread;QtGui=PyQt_XCB,PyQt_Wayland,PyQt_Vulkan;QtWidgets=;QtSvg=;QtSvgWidgets=;QtOpenGL=;QtOpenGLWidgets="
+    export PYQT_WASM_FEATURES="QtCore=$PYQT_CORE_DISABLED;QtGui=PyQt_XCB,PyQt_Wayland,PyQt_Vulkan;QtWidgets=;QtSvg=;QtSvgWidgets=;QtOpenGL=;QtOpenGLWidgets="
 
     sip-build \
         --verbose \
@@ -420,7 +436,7 @@ LDFLAGS
     log "Compiling Qt plugin imports and stubs..."
     local qt_include="$QT_INSTALL/include"
     em++ \
-        -fPIC \
+        -fPIC $PTHREAD_FLAG \
         -std=gnu++17 \
         -DQT_STATIC \
         -I"$qt_include" \
@@ -429,7 +445,7 @@ LDFLAGS
         -c "$PATCHES_DIR/qt_plugin_import.cpp" \
         -o "$BUILD_DIR/qt_plugin_import.o"
     emcc \
-        -fPIC \
+        -fPIC $PTHREAD_FLAG \
         -c "$PATCHES_DIR/qt_wasm_stubs.c" \
         -o "$BUILD_DIR/qt_wasm_stubs.o"
 
