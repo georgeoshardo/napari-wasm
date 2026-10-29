@@ -5,34 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>napari in the browser</title>
   <style>
-    :root { --bg: #262930; --fg: #f0f1f2; --muted: #9ea4ad; --accent: #50a2f1; }
+    :root { --bg: #262930; --fg: #f0f1f2; }
     html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
                  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
     #qt-container { position: fixed; inset: 0; }
     #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
                background: var(--bg); z-index: 10; }
-    #loading .box { max-width: 34rem; padding: 0 1.5rem; }
-    #loading h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 .5rem; }
-    #loading p { margin: .4rem 0; color: var(--muted); }
+    #loading .box { width: 16rem; text-align: center; }
     #status { color: var(--fg); }
     #status.error { color: #ff7b72; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 13px; }
-    .bar { height: 3px; background: #3a3f48; border-radius: 2px; overflow: hidden; margin: 1rem 0; }
-    .bar div { height: 100%; width: 30%; background: var(--accent); animation: slide 1.4s ease-in-out infinite; }
-    @keyframes slide { from { margin-left: -30%; } to { margin-left: 100%; } }
-    a { color: var(--accent); }
   </style>
 </head>
 <body>
   <div id="qt-container"></div>
   <div id="loading">
     <div class="box">
-      <h1>napari in the browser</h1>
-      <p>Python, Qt and napari are loading into this tab. Nothing runs on a server.
-         The first visit downloads Python and napari's packages and takes
-         around half a minute; later visits are faster.</p>
-      <div class="bar"><div></div></div>
-      <p id="status">Loading Python</p>
-      <p><a href="https://github.com/georgeoshardo/napari-wasm">Source on GitHub</a></p>
+      <p id="status">Loading</p>
     </div>
   </div>
 
@@ -40,7 +28,7 @@
     import { loadPyodide } from "./qt-build/build/sources/pyodide/dist/pyodide.mjs";
 
     const statusEl = document.getElementById("status");
-    window.napariStatus = (text) => { statusEl.textContent = text; console.log(text); };
+    window.napariStatus = (text) => console.log(text);
     window.napariReady = () => document.getElementById("loading").remove();
 
     try {
@@ -65,7 +53,6 @@
       console.error(error);
       statusEl.classList.add("error");
       statusEl.textContent = `napari failed to start:\n${error}`;
-      document.querySelector(".bar").remove();
     }
   </script>
 </body>
