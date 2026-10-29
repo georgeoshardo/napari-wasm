@@ -11,6 +11,8 @@ Usage: python threads/patch-pyodide.py <pyodide-dir> [<existing-emsdk-dir>]
   a threaded build needs and sets up the workers (fix_asm_js.py), and the
   workers are told where pyodide.asm.js is.
 - The sqlite3 recipe links Emscripten's threaded sqlite.
+- Pipes and eventfds are implemented in the main module, so threads can wake
+  each other through them (vfd.c).
 - Calls from JavaScript into Python take the GIL and give it back, and the
   main thread doesn't hold it otherwise, so other threads can run while the
   browser has control.
@@ -22,6 +24,7 @@ Usage: python threads/patch-pyodide.py <pyodide-dir> [<existing-emsdk-dir>]
   left out as in the Qt build.
 """
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -154,13 +157,29 @@ for recipes in [root / "packages", root.parent / "recipes" / "packages"]:
     if sqlite.exists():
         replace_once(sqlite, "embuilder build sqlite3 --pic", "embuilder build sqlite3-mt --pic")
         replace_once(sqlite, "-sUSE_SQLITE3 -lsqlite3\n", "-sUSE_SQLITE3 -lsqlite3-mt\n")
+# pythran 0.19 needs C++17; scipy and scikit-image compile its headers as C++14
+replace_once(root / "tools" / "constraints.txt", "cmake < 4\n", "cmake < 4\npythran < 0.19\n")
+# pipes and eventfds that threads can share (see vfd.c), linked into the main
+# module so that CPython and side modules use them
+threads = Path(__file__).resolve().parent
+shutil.copy(threads / "vfd.c", root / "src" / "core" / "vfd.c")
+(root / "src" / "core" / "sys").mkdir(exist_ok=True)
+shutil.copy(threads / "include" / "sys" / "eventfd.h", root / "src" / "core" / "sys" / "eventfd.h")
+replace_once(root / "Makefile", "\tsrc/core/main.o  \\\n", "\tsrc/core/main.o  \\\n\tsrc/core/vfd.o  \\\n")
+replace_once(root / "Makefile", "-lpyodide src/core/main.o $(MAIN_MODULE_LDFLAGS)",
+             "-lpyodide src/core/main.o src/core/vfd.o $(MAIN_MODULE_LDFLAGS)")
+# a main module links all of libc, so libc's versions come out of the threaded
+# libc (only threaded builds use it)
+replace_once(root / "Makefile", "\tembuilder build libgl\n",
+             "\tembuilder build libgl\n"
+             "\tembuilder build libc-mt --pic\n"
+             "\temar d $$(em-config CACHE)/sysroot/lib/wasm32-emscripten/pic/libc-mt.a"
+             " read.o write.o close.o poll.o select.o pipe.o pipe2.o fcntl.o\n")
 # Pyodide cuts the last 7 lines of pyodide.asm.js to drop Emscripten's
 # module-export block; in a threaded build that cuts the lines that start the
 # runtime in each worker instead. fix_asm_js.py does it properly and sets the
 # workers up.
-# pythran 0.19 needs C++17; scipy and scikit-image compile its headers as C++14
-replace_once(root / "tools" / "constraints.txt", "cmake < 4\n", "cmake < 4\npythran < 0.19\n")
-fix_asm_js = Path(__file__).resolve().parent / "fix_asm_js.py"
+fix_asm_js = threads / "fix_asm_js.py"
 replace_once(root / "Makefile",
              "\t$(SED) -i -n -e :a -e '1,7!{P;N;D;};N;ba' dist/pyodide.asm.js",
              f"\tpython3 {fix_asm_js} dist/pyodide.asm.js")
