@@ -11,7 +11,7 @@
 <body>
   <div id="log"></div>
   <script type="module">
-    // Runs threads/test.py in the threaded Pyodide. Needs a server sending the
+    // Runs threads/test.py (or ?script=<name>) in the threaded Pyodide. Needs a server sending the
     // cross-origin isolation headers (python web/serve.py 8770 --isolated).
     const logEl = document.getElementById("log");
     const log = (msg) => { logEl.textContent += msg + "\n"; console.log(msg); };
@@ -27,8 +27,9 @@
       window.pyodide = pyodide;
       log(`Pyodide ${pyodide.version} loaded`);
       await pyodide.loadPackage("numpy", { messageCallback: log });
-      const code = await (await fetch("./test.py")).text();
-      await pyodide.runPythonAsync(code, { filename: "test.py" });
+      const script = new URLSearchParams(location.search).get("script") || "test";
+      const code = await (await fetch(`./${script}.py`)).text();
+      await pyodide.runPythonAsync(code, { filename: `${script}.py` });
     } catch (error) {
       log(`ERROR: ${error}`);
       document.title = "threads test: error";

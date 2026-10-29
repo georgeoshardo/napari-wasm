@@ -11,6 +11,9 @@ Usage: python threads/patch-pyodide.py <pyodide-dir> [<existing-emsdk-dir>]
   a threaded build needs and sets up the workers (fix_asm_js.py), and the
   workers are told where pyodide.asm.js is.
 - The sqlite3 recipe links Emscripten's threaded sqlite.
+- Calls from JavaScript into Python take the GIL and give it back, and the
+  main thread doesn't hold it otherwise, so other threads can run while the
+  browser has control.
 - The main module pre-starts a pool of workers. Starting a thread waits for its
   worker, and a browser only starts a new worker once the main thread returns
   to the event loop, so without a pool the first thread start hangs.
@@ -53,6 +56,85 @@ replace_once(root / "src" / "js" / "emscripten-settings.ts",
              "    thisProgram: config._sysExecutable,\n"
              "    // @ts-ignore\n"
              "    mainScriptUrlOrBlob: `${config.indexURL}pyodide.asm.js`,\n")
+# Pyodide holds the GIL on the main thread all the time, also while the browser
+# has control, so other threads only run when the main thread happens to be
+# running Python. Pyodide's JavaScript assumes it holds the GIL throughout a
+# call into Python and for the C calls it makes afterwards (converting errors,
+# reference counts), so the GIL is held per browser task: API.enterPython takes
+# it if the task doesn't have it and queues a microtask that gives it back once
+# the task's JavaScript is done. It's called on every entry into Python
+# (Py_ENTER, pyodide.toPy) and when a suspended Python stack resumes (JSPI).
+# While a stack is suspended (run_sync) the GIL stays taken, as it would for a
+# C call that blocks without releasing it: releasing it stops the stack from
+# resuming.
+# Start-up holds the GIL throughout (it makes direct C calls across tasks) and
+# hands it over at the end.
+ENTER_PYTHON = """
+// Hold the GIL for the rest of this browser task (see patch-pyodide.py). The
+// thread state that was current is detached and re-attached as it is: while a
+// stack is suspended Pyodide has swapped in another one.
+let gilPerTask = false;
+let holdingForTask = false;
+let detachedThreadState = 0;
+function giveBackGil() {
+  holdingForTask = false;
+  if (API.suspendedStacks > 0) {
+    // a suspended stack keeps the GIL (releasing it stops run_sync resuming)
+    return;
+  }
+  // @ts-ignore
+  detachedThreadState = _PyEval_SaveThread();
+}
+API.suspendedStacks = 0;
+API.enterPython = function () {
+  if (!gilPerTask || holdingForTask) {
+    return;
+  }
+  if (detachedThreadState) {
+    // @ts-ignore
+    _PyEval_RestoreThread(detachedThreadState);
+    detachedThreadState = 0;
+  }
+  holdingForTask = true;
+  queueMicrotask(giveBackGil);
+};
+API.releaseStartupGil = function () {
+  gilPerTask = true;
+  API.enterPython();
+};
+"""
+replace_once(root / "src" / "js" / "api.ts",
+             "API.loadBinaryFile = loadBinaryFile;\n",
+             "API.loadBinaryFile = loadBinaryFile;\n" + ENTER_PYTHON)
+replace_once(root / "src" / "js" / "types.ts",
+             "  rawRun: (code: string) => [number, string];\n",
+             "  rawRun: (code: string) => [number, string];\n"
+             "  enterPython: () => void;\n"
+             "  releaseStartupGil: () => void;\n"
+             "  suspendedStacks: number;\n")
+replace_once(root / "src" / "core" / "pyproxy.c",
+             "#define Py_ENTER()                                                             \\\n"
+             "  _check_gil();                                                                \\\n",
+             "#define Py_ENTER()                                                             \\\n"
+             "  API.enterPython();                                                           \\\n")
+replace_once(root / "src" / "js" / "api.ts",
+             "    let py_result = 0;\n    let result = 0;\n    try {\n"
+             "      py_result = Module.js2python_convert(obj, {",
+             "    API.enterPython();\n"
+             "    let py_result = 0;\n    let result = 0;\n    try {\n"
+             "      py_result = Module.js2python_convert(obj, {")
+replace_once(root / "src" / "core" / "stack_switching" / "suspenders.c",
+             "  const stackState = new StackState();\n",
+             "  API.suspendedStacks++;\n  const stackState = new StackState();\n")
+replace_once(root / "src" / "core" / "stack_switching" / "suspenders.c",
+             "EM_JS(void, restoreState, (JsVal state), {\n",
+             "EM_JS(void, restoreState, (JsVal state), {\n"
+             "  API.suspendedStacks--;\n  API.enterPython();\n")
+replace_once(root / "src" / "js" / "api.ts",
+             "  bootstrapFinalized!();\n  return pyodide;\n};",
+             "  bootstrapFinalized!();\n"
+             "  API.releaseStartupGil();\n"
+             "  return pyodide;\n};")
 # the sqlite3 recipe links Emscripten's single-threaded sqlite port by name
 sqlite = root / "packages" / "sqlite3" / "meta.yaml"
 replace_once(sqlite, "embuilder build sqlite3 --pic", "embuilder build sqlite3-mt --pic")
