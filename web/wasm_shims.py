@@ -23,9 +23,15 @@ the browser build rather than changing behaviour:
   96.
 * vispy's Cython distance-field function is replaced with a scipy one.
 * Pyodide gives every thread its browser event loop, which only runs on the
-  main thread. Other threads get asyncio's selector loop instead, woken
-  through a pipe since Emscripten has no socket pairs (the threaded build's
-  pipes work across threads).
+  main thread, and every new loop is another browser loop. Other threads, and
+  new loops made after the main thread's own, get asyncio's selector loop
+  instead, woken through a pipe since Emscripten has no socket pairs (the
+  threaded build's pipes work across threads).
+* napari's console runs code in an in-process IPython kernel, which hands each
+  request to a new thread when the calling thread's event loop is running, as
+  Pyodide's always is. The request runs as an eager task on the main thread
+  instead: ordinary code finishes at once, code with top-level ``await``
+  finishes in the browser's event loop.
 """
 
 from __future__ import annotations
@@ -48,6 +54,7 @@ def install():
     _install_vispy_dpi()
     _install_vispy_sdf()
     _install_thread_event_loops()
+    _install_inprocess_kernel_dispatch()
 
 
 # --- Qt threads ---------------------------------------------------------------
@@ -84,7 +91,7 @@ def _install_thread_event_loops():
         def close(self):
             os.close(self._fd)
 
-    class ThreadLoop(asyncio.SelectorEventLoop):
+    class SelectorLoop(asyncio.SelectorEventLoop):
         def _make_self_pipe(self):
             read_fd, write_fd = os.pipe()
             self._ssock, self._csock = PipeEnd(read_fd), PipeEnd(write_fd)
@@ -110,9 +117,11 @@ def _install_thread_event_loops():
             return loop
 
         def new_event_loop(self):
-            if threading.current_thread() is threading.main_thread():
+            # a loop made on the main thread may be run in another one
+            # (tornado's IOLoop, for one)
+            if threading.current_thread() is threading.main_thread() and not self._default_loop:
                 return super().new_event_loop()
-            return ThreadLoop()
+            return SelectorLoop()
 
         def set_event_loop(self, loop):
             if threading.current_thread() is threading.main_thread():
@@ -133,6 +142,38 @@ def _install_thread_event_loops():
             return runner.run(main)
 
     asyncio.run = run
+
+
+def _install_inprocess_kernel_dispatch():
+    import asyncio
+    import importlib.util
+
+    if importlib.util.find_spec("ipykernel") is None:
+        return
+    from ipykernel.inprocess.client import InProcessKernelClient
+
+    def _dispatch_to_kernel(self, msg):
+        kernel = self.kernel
+        if kernel is None:
+            raise RuntimeError("Cannot send request. No kernel exists.")
+        stream = kernel.shell_stream
+        self.session.send(stream, msg)
+        msg_parts = stream.recv_multipart()
+
+        def reply(task):
+            task.result()
+            _idents, reply_msg = self.session.recv(stream, copy=False)
+            self.shell_channel.call_handlers_later(reply_msg)
+
+        task = asyncio.Task(
+            kernel.dispatch_shell(msg_parts), loop=asyncio.get_event_loop(), eager_start=True
+        )
+        if task.done():
+            reply(task)
+        else:
+            task.add_done_callback(reply)
+
+    InProcessKernelClient._dispatch_to_kernel = _dispatch_to_kernel
 
 
 class _ThreadedLoopPolicy:
@@ -397,36 +438,45 @@ def _make_pyopengl_platform():
     return EmscriptenPlatform
 
 
-async def install_napari(wheel_dir_url, version="0.7.1", mocks=(), requirements=()):
+async def install_napari(
+    wheel_dir_url, version="0.7.1", mocks=(), requirements=(), constraints=(), console=False
+):
     """Install napari and its dependencies with micropip.
 
     Requirements with no WebAssembly build are registered as installed so the
-    resolver skips them: psutil (stood in for here) and the IPython console
-    chain, which napari only loads for its console. Everything else resolves
+    resolver skips them: psutil (stood in for here) and, unless ``console`` is
+    set, the IPython console chain, which napari only loads for its console
+    and which needs the threaded build's pyzmq. Everything else resolves
     normally: Pyodide's builds through the lock file, pure-Python wheels from
     PyPI, and vispy from the wheel made by make_vispy_wheel.py.
 
-    ``mocks`` adds (name, version) pairs to register as installed and
-    ``requirements`` adds requirement strings, e.g. to pin a pure-Python
-    package to the version matching a compiled one in the lock file.
+    ``mocks`` adds (name, version) pairs to register as installed,
+    ``requirements`` adds requirement strings and ``constraints`` limits the
+    versions chosen, e.g. to keep a pure-Python package at the version matching
+    a compiled one in the lock file.
     """
     import micropip
 
     for name, mock_version in [
         ("psutil", "7.0.0"),
-        ("napari-console", "0.1.4"),
+        *([] if console else [("napari-console", "0.1.4")]),
         ("freetype-py", "2.5.1"),
         *mocks,
     ]:
         micropip.add_mock_package(name, mock_version)
+    if console:
+        # ipykernel's debugger attaches over sockets, and debugpy's wheel holds
+        # Linux libraries; with no module to import, ipykernel goes without it
+        micropip.add_mock_package("debugpy", "1.8.17", modules={})
     await micropip.install(
         [
             f"napari=={version}",
             f"{wheel_dir_url}/vispy-0.16.2-py3-none-any.whl",
-            # 4.14 imports os.geteuid, which Emscripten doesn't have
-            "platformdirs<4.14",
+            *(["napari-console"] if console else []),
             *requirements,
-        ]
+        ],
+        # platformdirs 4.14 imports os.geteuid, which Emscripten doesn't have
+        constraints=["platformdirs<4.14", *constraints],
     )
 
 
