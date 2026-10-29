@@ -46,6 +46,10 @@ replace_once(envs, "export LDFLAGS_BASE=\\\n\t$(OPTFLAGS) \\",
              "export LDFLAGS_BASE=\\\n\t-pthread \\\n\t$(OPTFLAGS) \\")
 replace_once(envs, "\t-s MAIN_MODULE=1 \\",
              f"\t-s MAIN_MODULE=1 \\\n\t-s PTHREAD_POOL_SIZE={POOL_SIZE} \\")
+# Rust code needs atomics for shared memory; its standard library is compiled
+# with the same flags (cargo build-std, set in threads/build.sh)
+replace_once(envs, "-Z emscripten-wasm-eh\n",
+             "-Z emscripten-wasm-eh -C target-feature=+atomics,+bulk-memory,+mutable-globals\n")
 # Pyodide links Emscripten's native libraries by hand (AUTO_NATIVE_LIBRARIES=0);
 # with threads, Qt's use of the html5 API needs the C half of it as well
 replace_once(envs, "\t-lGL \\\n", "\t-lGL \\\n\t-lhtml5 \\\n")
@@ -120,6 +124,11 @@ replace_once(root / "src" / "core" / "pyproxy.c",
              "  _check_gil();                                                                \\\n",
              "#define Py_ENTER()                                                             \\\n"
              "  API.enterPython();                                                           \\\n")
+# the handlers Pyodide attaches to a JavaScript promise that Python awaits call
+# into Python directly, in their own task
+for handler in ["function destroy(){\n", "function onFulfilled(res) {\n", "function onRejected(err) {\n"]:
+    replace_once(root / "src" / "core" / "pyproxy.c", f"  {handler}",
+                 f"  {handler}    API.enterPython();\n")
 replace_once(root / "src" / "js" / "api.ts",
              "    let py_result = 0;\n    let result = 0;\n    try {\n"
              "      py_result = Module.js2python_convert(obj, {",
@@ -138,14 +147,19 @@ replace_once(root / "src" / "js" / "api.ts",
              "  bootstrapFinalized!();\n"
              "  API.releaseStartupGil();\n"
              "  return pyodide;\n};")
-# the sqlite3 recipe links Emscripten's single-threaded sqlite port by name
-sqlite = root / "packages" / "sqlite3" / "meta.yaml"
-replace_once(sqlite, "embuilder build sqlite3 --pic", "embuilder build sqlite3-mt --pic")
-replace_once(sqlite, "-sUSE_SQLITE3 -lsqlite3\n", "-sUSE_SQLITE3 -lsqlite3-mt\n")
+# the sqlite3 recipe links Emscripten's single-threaded sqlite port by name, in
+# Pyodide's own recipes and in pyodide-recipes (build/threads/recipes) if there
+for recipes in [root / "packages", root.parent / "recipes" / "packages"]:
+    sqlite = recipes / "sqlite3" / "meta.yaml"
+    if sqlite.exists():
+        replace_once(sqlite, "embuilder build sqlite3 --pic", "embuilder build sqlite3-mt --pic")
+        replace_once(sqlite, "-sUSE_SQLITE3 -lsqlite3\n", "-sUSE_SQLITE3 -lsqlite3-mt\n")
 # Pyodide cuts the last 7 lines of pyodide.asm.js to drop Emscripten's
 # module-export block; in a threaded build that cuts the lines that start the
 # runtime in each worker instead. fix_asm_js.py does it properly and sets the
 # workers up.
+# pythran 0.19 needs C++17; scipy and scikit-image compile its headers as C++14
+replace_once(root / "tools" / "constraints.txt", "cmake < 4\n", "cmake < 4\npythran < 0.19\n")
 fix_asm_js = Path(__file__).resolve().parent / "fix_asm_js.py"
 replace_once(root / "Makefile",
              "\t$(SED) -i -n -e :a -e '1,7!{P;N;D;};N;ba' dist/pyodide.asm.js",
