@@ -22,7 +22,7 @@ import wasm_shims
 
 start = time.perf_counter()
 await wasm_shims.install_napari(  # noqa: F704
-    f"{base}/../web/wheels", requirements=["pydantic==2.12.5"]
+    f"{base}/../web/wheels", constraints=["pydantic==2.12.5"]
 )
 js.threadsLog(f"napari installed in {time.perf_counter() - start:.1f} s")
 
