@@ -3,11 +3,13 @@
 Call ``install()`` before importing vispy or napari. Each patch fills a gap in
 the browser build rather than changing behaviour:
 
-* Qt is built without threads or processes, so ``QThread``, ``QThreadPool``,
-  ``QRunnable``, the mutex classes and ``QProcess`` are missing from
-  ``PyQt6.QtCore``. napari and superqt import them at module level. The
+* Qt is built without processes, and the default build without threads, so
+  ``QProcess`` (and, without threads, ``QThread``, ``QThreadPool``,
+  ``QRunnable`` and the mutex classes) are missing from ``PyQt6.QtCore``.
+  napari and superqt import them at module level. Without threads the
   stand-ins run thread-pool work on the event loop and leave
-  ``QThread.start()`` as a no-op.
+  ``QThread.start()`` as a no-op; the threaded build (../threads) has the
+  real classes and gets no stand-ins. ``QtTest`` isn't built either.
 * ``psutil`` has no WebAssembly build; napari only asks it for total memory.
 * vispy reaches OpenGL through ``ctypes``. Its ES2 backend accepts a library
   through ``ctypes.TEST_DLL``; ``ctypes.CDLL(None)`` is Pyodide's main module,
@@ -34,6 +36,7 @@ import numpy as np
 
 def install():
     _install_qt_thread_stand_ins()
+    _install_qt_process_and_test_stand_ins()
     _install_psutil()
     _install_gl_library()
     _install_gl_window_widget()
@@ -175,31 +178,40 @@ def _install_qt_thread_stand_ins():
         def relock(self):
             pass
 
-    class QProcess(QtCore.QObject):
-        """Processes are compiled out too; napari only uses this to restart."""
-
-        @staticmethod
-        def startDetached(*args, **kwargs):
-            return False
-
-    for cls in (QThread, QRunnable, QThreadPool, QMutex, QMutexLocker, QProcess):
+    for cls in (QThread, QRunnable, QThreadPool, QMutex, QMutexLocker):
         setattr(QtCore, cls.__name__, cls)
     QtCore.QRecursiveMutex = QMutex
     QtCore.QObject.thread = lambda self: QThread.currentThread()
     QtCore.QObject.moveToThread = lambda self, thread: None
 
-    # QtTest isn't built; vispy's Qt backend imports it for QTest.qWait only
+
+def _install_qt_process_and_test_stand_ins():
+    """QProcess and QtTest are left out of both builds, with or without threads."""
     import PyQt6
+    from PyQt6 import QtCore
 
-    class QTest:
-        @staticmethod
-        def qWait(ms):
-            QtCore.QCoreApplication.processEvents()
+    if not hasattr(QtCore, "QProcess"):
 
-    qt_test = types.ModuleType("PyQt6.QtTest")
-    qt_test.QTest = QTest
-    sys.modules["PyQt6.QtTest"] = qt_test
-    PyQt6.QtTest = qt_test
+        class QProcess(QtCore.QObject):
+            """napari only uses this to restart itself."""
+
+            @staticmethod
+            def startDetached(*args, **kwargs):
+                return False
+
+        QtCore.QProcess = QProcess
+
+    if "PyQt6.QtTest" not in sys.modules:
+        # vispy's Qt backend imports QtTest for QTest.qWait only
+        class QTest:
+            @staticmethod
+            def qWait(ms):
+                QtCore.QCoreApplication.processEvents()
+
+        qt_test = types.ModuleType("PyQt6.QtTest")
+        qt_test.QTest = QTest
+        sys.modules["PyQt6.QtTest"] = qt_test
+        PyQt6.QtTest = qt_test
 
 
 # --- psutil -------------------------------------------------------------------
@@ -294,7 +306,7 @@ def _make_pyopengl_platform():
     return EmscriptenPlatform
 
 
-async def install_napari(wheel_dir_url, version="0.7.1"):
+async def install_napari(wheel_dir_url, version="0.7.1", mocks=(), requirements=()):
     """Install napari and its dependencies with micropip.
 
     Requirements with no WebAssembly build are registered as installed so the
@@ -302,6 +314,10 @@ async def install_napari(wheel_dir_url, version="0.7.1"):
     chain, which napari only loads for its console. Everything else resolves
     normally: Pyodide's builds through the lock file, pure-Python wheels from
     PyPI, and vispy from the wheel made by make_vispy_wheel.py.
+
+    ``mocks`` adds (name, version) pairs to register as installed and
+    ``requirements`` adds requirement strings, e.g. to pin a pure-Python
+    package to the version matching a compiled one in the lock file.
     """
     import micropip
 
@@ -309,10 +325,17 @@ async def install_napari(wheel_dir_url, version="0.7.1"):
         ("psutil", "7.0.0"),
         ("napari-console", "0.1.4"),
         ("freetype-py", "2.5.1"),
+        *mocks,
     ]:
         micropip.add_mock_package(name, mock_version)
     await micropip.install(
-        [f"napari=={version}", f"{wheel_dir_url}/vispy-0.16.2-py3-none-any.whl"]
+        [
+            f"napari=={version}",
+            f"{wheel_dir_url}/vispy-0.16.2-py3-none-any.whl",
+            # 4.14 imports os.geteuid, which Emscripten doesn't have
+            "platformdirs<4.14",
+            *requirements,
+        ]
     )
 
 
