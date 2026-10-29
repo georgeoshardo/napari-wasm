@@ -1,0 +1,84 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space for the Qt build
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: v0.45.0
+          manifest-path: qt-build/pixi.toml
+          cache: true
+
+      # Qt takes most of the build time and only changes with the build scripts
+      - name: Restore Qt for WebAssembly
+        id: qt-cache
+        uses: actions/cache@v4
+        with:
+          path: qt-build/build/qt6-wasm
+          key: qt6-wasm-${{ runner.os }}-${{ hashFiles('qt-build/build.sh', 'qt-build/pixi.lock', 'qt-build/patches/**') }}
+
+      - name: Build Qt
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        working-directory: qt-build
+        run: pixi run build-qt
+
+      - name: Build PyQt6
+        working-directory: qt-build
+        run: pixi run build-pyqt
+
+      - name: Link Qt and PyQt6 into Pyodide
+        working-directory: qt-build
+        run: pixi run build-pyodide
+
+      - name: Check PyQt6 imports
+        working-directory: qt-build
+        run: pixi run test
+
+      - name: Build the vispy wheel
+        run: python3 web/make_vispy_wheel.py
+
+      - name: Assemble the site
+        run: |
+          dist=qt-build/build/sources/pyodide/dist
+          mkdir -p _site/web/wheels "_site/$dist"
+          cp index.html LICENSE _site/
+          cp web/*.py web/run.html web/pyodide-lock.json _site/web/
+          cp web/wheels/*.whl _site/web/wheels/
+          cp "$dist"/pyodide.mjs "$dist"/pyodide.asm.js "$dist"/pyodide.asm.wasm \
+             "$dist"/python_stdlib.zip "$dist"/pyodide-lock.json "_site/$dist/"
+          du -sh _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

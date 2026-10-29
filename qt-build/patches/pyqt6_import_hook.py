@@ -15,6 +15,7 @@ class PyQt6Finder(abc.MetaPathFinder):
         "PyQt6", "PyQt6.sip",
         "PyQt6.QtCore", "PyQt6.QtGui", "PyQt6.QtWidgets",
         "PyQt6.QtSvg", "PyQt6.QtSvgWidgets", "PyQt6.QtXml",
+        "PyQt6.QtOpenGL", "PyQt6.QtOpenGLWidgets",
     }
 
     def find_spec(self, fullname, path, target=None):

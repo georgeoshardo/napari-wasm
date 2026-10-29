@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>napari-wasm</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; background: #fff; color: #222; }
+    #qt-container { width: 1000px; height: 700px; border: 1px solid #bbb; }
+    #log { white-space: pre-wrap; font: 12px ui-monospace, monospace; background: #111; color: #ddd;
+           padding: 8px; height: 220px; overflow-y: auto; margin-top: 8px; }
+    #status { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div>Script: <code id="script"></code> &middot; <span id="status">loading</span></div>
+  <div id="qt-container"></div>
+  <div id="log"></div>
+
+  <script type="module">
+    // Runs web/<script>.py (?script=napari_image) in the custom Pyodide build, with
+    // Qt drawing into #qt-container. Progress and errors go to #log and the
+    // console; #status ends as "done" or "error".
+    import { loadPyodide } from "../qt-build/build/sources/pyodide/dist/pyodide.mjs";
+
+    const params = new URLSearchParams(location.search);
+    const script = params.get("script") || "napari_image";
+    document.getElementById("script").textContent = script + ".py";
+    const logEl = document.getElementById("log");
+    const statusEl = document.getElementById("status");
+    const log = (msg) => { logEl.textContent += msg + "\n"; logEl.scrollTop = logEl.scrollHeight; console.log(msg); };
+    const setStatus = (s) => { statusEl.textContent = s; document.title = `napari-wasm: ${s}`; };
+
+    try {
+      const t0 = performance.now();
+      const pyodide = await loadPyodide({
+        indexURL: new URL("../qt-build/build/sources/pyodide/dist/", location.href).href,
+        lockFileURL: new URL("./pyodide-lock.json", location.href).href,
+        stdout: log,
+        stderr: log,
+      });
+      window.pyodide = pyodide;
+      pyodide._module.qtContainerElements = [document.getElementById("qt-container")];
+      log(`Pyodide ${pyodide.version} loaded in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+
+      // helper modules the scripts import
+      const sitePackages = pyodide.runPython("import site; site.getsitepackages()[0]");
+      for (const module of ["wasm_shims.py", "zarr_fetch.py"]) {
+        const source = await (await fetch(`./${module}`)).text();
+        pyodide.FS.writeFile(`${sitePackages}/${module}`, source);
+      }
+
+      const code = await (await fetch(`./${script}.py`)).text();
+      await pyodide.loadPackage("micropip", { messageCallback: log });  // wasm_shims.install_napari uses it
+      await pyodide.loadPackagesFromImports(code, { messageCallback: log });
+      await pyodide.runPythonAsync(code, { filename: `${script}.py` });
+      setStatus("done");
+    } catch (err) {
+      log(String(err));
+      setStatus("error");
+    }
+  </script>
+</body>
+</html>

@@ -3,3 +3,5 @@ dist/
 .pixi/
 __pycache__/
 .DS_Store
+web/wheels/
+data/

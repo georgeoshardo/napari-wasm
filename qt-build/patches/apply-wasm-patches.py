@@ -396,6 +396,8 @@ extern PyObject *PyInit_QtWidgets();
 extern PyObject *PyInit_QtSvg();
 extern PyObject *PyInit_QtSvgWidgets();
 extern PyObject *PyInit_QtXml();
+extern PyObject *PyInit_QtOpenGL();
+extern PyObject *PyInit_QtOpenGLWidgets();
 extern PyObject *PyInit_sip();
 
 /* Create a namespace package for PyQt6 */
@@ -429,6 +431,8 @@ static void register_pyqt6_modules(void) {
     PyImport_AppendInittab("PyQt6.QtSvg", PyInit_QtSvg);
     PyImport_AppendInittab("PyQt6.QtSvgWidgets", PyInit_QtSvgWidgets);
     PyImport_AppendInittab("PyQt6.QtXml", PyInit_QtXml);
+    PyImport_AppendInittab("PyQt6.QtOpenGL", PyInit_QtOpenGL);
+    PyImport_AppendInittab("PyQt6.QtOpenGLWidgets", PyInit_QtOpenGLWidgets);
 }
 
 """
