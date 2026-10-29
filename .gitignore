@@ -9,3 +9,4 @@ threads/recipes/*/build/
 threads/recipes/*/dist/
 threads/recipes/*/build.log
 threads/rust-test/target/
+threads/recipes/.libs/
