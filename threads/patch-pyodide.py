@@ -174,7 +174,7 @@ replace_once(root / "Makefile", "\tembuilder build libgl\n",
              "\tembuilder build libgl\n"
              "\tembuilder build libc-mt --pic\n"
              "\temar d $$(em-config CACHE)/sysroot/lib/wasm32-emscripten/pic/libc-mt.a"
-             " read.o write.o close.o poll.o select.o pipe.o pipe2.o fcntl.o\n")
+             " read.o write.o close.o poll.o select.o pipe.o pipe2.o fcntl.o dup.o dup2.o dup3.o\n")
 # Pyodide cuts the last 7 lines of pyodide.asm.js to drop Emscripten's
 # module-export block; in a threaded build that cuts the lines that start the
 # runtime in each worker instead. fix_asm_js.py does it properly and sets the

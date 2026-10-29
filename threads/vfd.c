@@ -12,6 +12,7 @@
 // Each pipe end or eventfd holds an open /dev/null descriptor, which reserves
 // its number; anything else goes to Emscripten as before.
 
+#define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -28,6 +29,8 @@
 
 int __syscall_poll(intptr_t fds, int nfds, int timeout);
 int __syscall_fcntl64(int fd, int cmd, ...);
+int __syscall_dup(int fd);
+int __syscall_dup3(int fd, int suggestfd, int flags);
 
 #define MAX_FDS 4096
 #define PIPE_SIZE 65536
@@ -48,6 +51,8 @@ struct vfd {
   int semaphore;
   uint64_t count;
   struct pipe_buffer* pipe;
+  // descriptors sharing it (dup)
+  int refs;
 };
 
 static struct vfd* vfds[MAX_FDS];
@@ -76,6 +81,57 @@ lookup(int fd)
   return __atomic_load_n(&vfds[fd], __ATOMIC_ACQUIRE);
 }
 
+// with the lock held
+static void
+attach(int fd, struct vfd* v)
+{
+  v->refs++;
+  __atomic_store_n(&vfds[fd], v, __ATOMIC_RELEASE);
+}
+
+// with the lock held
+static void
+detach(int fd)
+{
+  struct vfd* v = lookup(fd);
+  if (!v) {
+    return;
+  }
+  __atomic_store_n(&vfds[fd], NULL, __ATOMIC_RELEASE);
+  if (--v->refs == 0) {
+    struct pipe_buffer* p = v->pipe;
+    if (p) {
+      if (v->kind == PIPE_READ) {
+        p->readers--;
+      } else {
+        p->writers--;
+      }
+      if (p->readers == 0 && p->writers == 0) {
+        free(p);
+      }
+    }
+    free(v);
+  }
+  pthread_cond_broadcast(&changed);
+}
+
+// gives a duplicated descriptor the same pipe end or eventfd
+static int
+share(int fd, struct vfd* v)
+{
+  if (fd < 0 || !v) {
+    return fd;
+  }
+  if (fd >= MAX_FDS) {
+    (void)__wasi_fd_close(fd);
+    return fail(EMFILE);
+  }
+  pthread_mutex_lock(&lock);
+  attach(fd, v);
+  pthread_mutex_unlock(&lock);
+  return fd;
+}
+
 // a descriptor number for a new pipe end or eventfd
 static int
 reserve(struct vfd* v)
@@ -84,12 +140,7 @@ reserve(struct vfd* v)
   if (fd < 0) {
     return -1;
   }
-  if (fd >= MAX_FDS) {
-    (void)__wasi_fd_close(fd);
-    return fail(EMFILE);
-  }
-  __atomic_store_n(&vfds[fd], v, __ATOMIC_RELEASE);
-  return fd;
+  return share(fd, v);
 }
 
 static short
@@ -336,27 +387,69 @@ write(int fd, const void* buffer, size_t size)
 int
 close(int fd)
 {
-  struct vfd* v = lookup(fd);
-  if (v) {
+  if (lookup(fd)) {
     pthread_mutex_lock(&lock);
-    __atomic_store_n(&vfds[fd], NULL, __ATOMIC_RELEASE);
-    struct pipe_buffer* p = v->pipe;
-    if (p) {
-      if (v->kind == PIPE_READ) {
-        p->readers--;
-      } else {
-        p->writers--;
-      }
-      if (p->readers == 0 && p->writers == 0) {
-        free(p);
-      }
-    }
-    free(v);
-    pthread_cond_broadcast(&changed);
+    detach(fd);
     pthread_mutex_unlock(&lock);
   }
   __wasi_errno_t error = __wasi_fd_close(fd);
   return wasi_result(error == __WASI_ERRNO_INTR ? 0 : error);
+}
+
+int
+dup(int fd)
+{
+  int result = __syscall_dup(fd);
+  return result < 0 ? fail(-result) : share(result, lookup(fd));
+}
+
+static int
+dup_onto(int old, int new, int flags)
+{
+  int result;
+  while ((result = __syscall_dup3(old, new, flags)) == -EBUSY) {
+  }
+  if (result < 0) {
+    return fail(-result);
+  }
+  pthread_mutex_lock(&lock);
+  detach(new);
+  struct vfd* v = lookup(old);
+  if (v) {
+    attach(new, v);
+  }
+  pthread_mutex_unlock(&lock);
+  return new;
+}
+
+int
+dup2(int old, int new)
+{
+  if (old == new) {
+    return __syscall_fcntl64(old, F_GETFD) < 0 ? fail(EBADF) : old;
+  }
+  if (new >= MAX_FDS && lookup(old)) {
+    return fail(EMFILE);
+  }
+  return dup_onto(old, new, 0);
+}
+
+int
+__dup3(int old, int new, int flags)
+{
+  if (old == new) {
+    return fail(EINVAL);
+  }
+  if (new >= MAX_FDS && lookup(old)) {
+    return fail(EMFILE);
+  }
+  return dup_onto(old, new, flags);
+}
+
+int
+dup3(int old, int new, int flags)
+{
+  return __dup3(old, new, flags);
 }
 
 int
@@ -385,10 +478,51 @@ fcntl(int fd, int cmd, ...)
     pthread_mutex_unlock(&lock);
     return result;
   }
+  // the rest is musl's fcntl: Emscripten has no F_DUPFD_CLOEXEC, so it falls
+  // back to F_DUPFD
+  int result;
   if (cmd == F_SETFL) {
     arg |= O_LARGEFILE;
   }
-  int result = __syscall_fcntl64(fd, cmd, arg);
+  if (cmd == F_GETOWN) {
+    struct f_owner_ex ex;
+    result = __syscall_fcntl64(fd, F_GETOWN_EX, &ex);
+    if (result == -EINVAL) {
+      result = __syscall_fcntl64(fd, cmd, (void*)arg);
+    }
+    if (result) {
+      return result < 0 ? fail(-result) : result;
+    }
+    return ex.type == F_OWNER_PGRP ? -ex.pid : ex.pid;
+  }
+  if (cmd == F_DUPFD_CLOEXEC) {
+    result = __syscall_fcntl64(fd, F_DUPFD_CLOEXEC, arg);
+    if (result != -EINVAL) {
+      return result < 0 ? fail(-result) : share(result, v);
+    }
+    result = __syscall_fcntl64(fd, F_DUPFD_CLOEXEC, 0);
+    if (result != -EINVAL) {
+      if (result >= 0) {
+        (void)__wasi_fd_close(result);
+      }
+      return fail(EINVAL);
+    }
+    result = __syscall_fcntl64(fd, F_DUPFD, arg);
+    return result < 0 ? fail(-result) : share(result, v);
+  }
+  switch (cmd) {
+    case F_SETLK:
+    case F_GETLK:
+    case F_GETOWN_EX:
+    case F_SETOWN_EX:
+      result = __syscall_fcntl64(fd, cmd, (void*)arg);
+      break;
+    default:
+      result = __syscall_fcntl64(fd, cmd, arg);
+  }
+  if (result >= 0 && cmd == F_DUPFD) {
+    return share(result, v);
+  }
   return result < 0 ? fail(-result) : result;
 }
 
