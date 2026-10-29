@@ -29,7 +29,7 @@
       window.pyodide = pyodide;
       pyodide._module.qtContainerElements = [document.getElementById("qt-container")];
       log(`Pyodide ${pyodide.version} loaded`);
-      await pyodide.loadPackage("numpy", { messageCallback: log });
+      await pyodide.loadPackage(["numpy", "micropip"], { messageCallback: log });
       const script = new URLSearchParams(location.search).get("script") || "test";
       const code = await (await fetch(`./${script}.py`)).text();
       await pyodide.runPythonAsync(code, { filename: `${script}.py` });

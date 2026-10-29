@@ -1,0 +1,15 @@
+package:
+  name: rust_threads_test
+  version: 0.1.0
+  tag:
+    - rust
+  top-level:
+    - rust_threads_test
+source:
+  path: ../../rust-test
+requirements:
+  executable:
+    - rustup
+about:
+  summary: Checks that a PyO3 extension builds and loads in the threaded Pyodide
+  license: GPL-3.0
