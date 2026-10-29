@@ -1,0 +1,28 @@
+package:
+  name: pyzmq
+  version: 27.2.0
+  top-level:
+    - zmq
+source:
+  url: https://files.pythonhosted.org/packages/e7/8d/5b3d5631c2f4b4b8862f64cd0c9eb777b5710eeb5125b4be8dd0a200a4c0/pyzmq-27.2.0.tar.gz
+  sha256: 54d4259d1bfae24ecdb5ca79f7acc2eac6c286a02d6a0ae617797cb45f0726d3
+build:
+  # CMake 4's FindPython runs the interpreter through the cross-compiling
+  # emulator when cross-compiling (Pyodide's build constraints ask for CMake
+  # < 4 for the same reason). Stripping on install drops the dylink section a
+  # side module needs.
+  backend-flags: |
+    skbuild.cmake.version=>=3.15,<4
+    skbuild.install.strip=false
+  script: |
+    export PATH="$(pixi exec --spec 'cmake<4' -- sh -c 'dirname "$(command -v cmake)"'):$PATH"
+    # link the static libzmq built by the libzmq recipe
+    export ZMQ_PREFIX=${WASM_LIBRARY_DIR}
+    export PYZMQ_NO_BUNDLE=1
+    export PYZMQ_LIBZMQ_RPATH=0
+requirements:
+  host:
+    - libzmq
+about:
+  home: https://github.com/zeromq/pyzmq
+  license: BSD-3-Clause

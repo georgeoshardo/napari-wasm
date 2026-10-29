@@ -1,0 +1,32 @@
+package:
+  name: libzmq
+  version: 4.3.5
+  tag:
+    - library
+    - static_library
+source:
+  url: https://github.com/zeromq/libzmq/releases/download/v4.3.5/zeromq-4.3.5.tar.gz
+  sha256: 6653ef5910f17954861fe72332e68b03ca6e4d9c7160eb3a8de5a5a913bfab43
+build:
+  type: static_library
+  script: |
+    # Threads wake each other through eventfds, which threads/vfd.c provides
+    # (its header is in threads/include); CMake can't check for them when
+    # cross-compiling. Only in-process transports are useful in a browser.
+    emcmake cmake -S . -B build \
+      -DCMAKE_INSTALL_PREFIX=${WASM_LIBRARY_DIR} \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DCMAKE_C_FLAGS="-I${PKGDIR}/../../include" \
+      -DCMAKE_CXX_FLAGS="-I${PKGDIR}/../../include" \
+      -DBUILD_SHARED=OFF -DBUILD_STATIC=ON -DBUILD_TESTS=OFF \
+      -DWITH_PERF_TOOL=OFF -DWITH_DOCS=OFF -DENABLE_CPACK=OFF \
+      -DWITH_LIBSODIUM=OFF -DENABLE_CURVE=OFF -DENABLE_DRAFTS=OFF \
+      -DENABLE_WS=OFF -DWITH_TLS=OFF -DWITH_LIBBSD=OFF \
+      -DPOLLER=poll -DAPI_POLLER=poll -DZMQ_CV_IMPL=stl11 \
+      -DZMQ_HAVE_EVENTFD=ON -DZMQ_HAVE_EVENTFD_CLOEXEC=ON
+    cmake --build build -j ${PYODIDE_JOBS:-3}
+    cmake --install build
+about:
+  home: https://zeromq.org
+  license: MPL-2.0
