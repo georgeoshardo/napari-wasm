@@ -10,3 +10,5 @@ threads/recipes/*/dist/
 threads/recipes/*/build.log
 threads/rust-test/target/
 threads/recipes/.libs/
+threads/tokio-test/target/
+threads/tokio-test/Cargo.lock

@@ -31,6 +31,11 @@ export RUSTUP_HOME="$ROOT/build/threads/rust/rustup"
 export CARGO_HOME="$ROOT/build/threads/rust/cargo"
 export PATH="$CARGO_HOME/bin:$PATH"
 export CARGO_UNSTABLE_BUILD_STD="std,panic_unwind"
+# A newer toolchain (RUST_TOOLCHAIN=..., e.g. for polars) has no prebuilt
+# Pyodide sysroot to download; the standard library is rebuilt anyway
+if [ -n "${RUST_TOOLCHAIN:-}" ]; then
+    export RUST_EMSCRIPTEN_TARGET_URL=""
+fi
 # scipy's recipe runs gfortran as a front end (f2c does the compiling); take
 # conda-forge's from pixi's cache rather than installing one
 if ! command -v gfortran >/dev/null; then

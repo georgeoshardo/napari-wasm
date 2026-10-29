@@ -1,0 +1,20 @@
+package:
+  name: tokio_threads_test
+  version: 0.1.0
+  tag:
+    - rust
+  top-level:
+    - tokio_threads_test
+source:
+  path: ../../tokio-test
+build:
+  script: |
+    # newer Rust (RUST_TOOLCHAIN=nightly-2026-08-18): wasm exceptions are the
+    # default, so -Z emscripten-wasm-eh is gone; mio uses its poll(2) backend
+    export RUSTFLAGS="-C link-arg=-sSIDE_MODULE=2 -Z link-native-libraries=yes -C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg mio_unsupported_force_poll_poll"
+requirements:
+  executable:
+    - rustup
+about:
+  summary: Checks that tokio's multi-threaded runtime runs in the threaded Pyodide
+  license: GPL-3.0
