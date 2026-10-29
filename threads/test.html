@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>threads test</title>
+  <style>
+    body { font: 13px/1.5 ui-monospace, monospace; margin: 16px; background: #fff; color: #222; }
+    #log { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div id="log"></div>
+  <script type="module">
+    // Runs threads/test.py in the threaded Pyodide. Needs a server sending the
+    // cross-origin isolation headers (python web/serve.py 8770 --isolated).
+    const logEl = document.getElementById("log");
+    const log = (msg) => { logEl.textContent += msg + "\n"; console.log(msg); };
+    window.threadsLog = log;
+    log(`crossOriginIsolated: ${self.crossOriginIsolated}`);
+    try {
+      const { loadPyodide } = await import("../build/threads/pyodide/dist/pyodide.mjs");
+      const pyodide = await loadPyodide({
+        indexURL: new URL("../build/threads/pyodide/dist/", location.href).href,
+        stdout: log,
+        stderr: log,
+      });
+      window.pyodide = pyodide;
+      log(`Pyodide ${pyodide.version} loaded`);
+      await pyodide.loadPackage("numpy", { messageCallback: log });
+      const code = await (await fetch("./test.py")).text();
+      await pyodide.runPythonAsync(code, { filename: "test.py" });
+    } catch (error) {
+      log(`ERROR: ${error}`);
+      document.title = "threads test: error";
+    }
+  </script>
+</body>
+</html>
