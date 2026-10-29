@@ -515,7 +515,11 @@ def use_vispy(debug=False, repair_shaders=True):
 
 
 _GL_COMPILE_STATUS = 0x8B81
-_SHADER_ERROR = re.compile(r"ERROR: \d+:(\d+):")
+_SHADER_ERROR = re.compile(r"ERROR: \d+:(\d+):(.*)")
+# a float and an int expression in one operation (napari's labels shader:
+# "$selection != int(t)", with $selection a float)
+_MIXED_OPERANDS = re.compile(r"wrong operand types.*(float.*int|int.*float)")
+_INT_CAST = re.compile(r"(?<![\w.])int\s*\(")
 # an integer literal: not part of an identifier, a float or a hex number
 _INT_LITERAL = re.compile(r"(?<![\w.])(\d+)(?![\w.])")
 
@@ -534,6 +538,26 @@ def _float_literals(line):
             if depth == 0:
                 out.append(line[start : i + 1])
                 start = i + 1
+    out.append(line[start:])
+    return "".join(out)
+
+
+def _float_casts(line):
+    """Wrap the ``int(...)`` casts in ``line`` in ``float(...)``."""
+    out, start = [], 0
+    for match in _INT_CAST.finditer(line):
+        if match.start() < start or line[: match.start()].rstrip().endswith("float("):
+            continue
+        depth, end = 0, None
+        for i in range(match.end() - 1, len(line)):
+            depth += {"(": 1, ")": -1}.get(line[i], 0)
+            if depth == 0:
+                end = i + 1
+                break
+        if end is None:
+            break
+        out.append(line[start : match.start()] + f"float({line[match.start() : end]})")
+        start = end
     out.append(line[start:])
     return "".join(out)
 
@@ -633,14 +657,18 @@ def _to_glsl_es3(source, fragment):
     return header + body
 
 
-def _repair_shader(source, error_lines):
+def _repair_shader(source, errors):
+    """Rewrite the lines in ``errors`` (line number -> messages) for GLSL ES."""
     lines = source.split("\n")
-    for number in error_lines:
+    for number, messages in errors.items():
         line = lines[number - 1] if 0 < number <= len(lines) else ""
         stripped = line.strip()
         if stripped.startswith("#") or stripped.startswith("for"):
             continue
-        lines[number - 1] = _float_literals(line)
+        line = _float_literals(line)
+        if any(_MIXED_OPERANDS.search(message) for message in messages):
+            line = _float_casts(line)
+        lines[number - 1] = line
     return "\n".join(lines)
 
 
@@ -659,11 +687,13 @@ def _adapt_shaders(es2, repair=True, attempts=40):
 
     Every shader is rewritten as GLSL ES 3.00 (``_to_glsl_es3``). vispy's and
     napari's shaders are desktop GLSL, which converts ``int`` to ``float``
-    implicitly (``a_size / 2``, ``mod(t, 256)``); GLSL ES never does. With
-    ``repair``, when a compile fails the integer literals on the lines WebGL
-    reports are rewritten as floats (``2`` -> ``2.0``), except array indices and
-    ``for`` headers, and the shader is compiled again, until it compiles or a
-    pass changes nothing. Lines that compile are never touched.
+    implicitly (``a_size / 2``, ``mod(t, 256)``, ``f != int(t)``); GLSL ES
+    never does. With ``repair``, when a compile fails the integer literals on
+    the lines WebGL reports are rewritten as floats (``2`` -> ``2.0``), except
+    array indices and ``for`` headers, and on lines where WebGL reports a float
+    and an int in one operation ``int(...)`` casts become ``float(int(...))``.
+    The shader is compiled again, until it compiles or a pass changes nothing.
+    Lines that compile are never touched.
     """
     if getattr(es2, "_wasm_shaders_adapted", False):
         return
@@ -690,8 +720,10 @@ def _adapt_shaders(es2, repair=True, attempts=40):
         for _ in range(attempts if repair else 0):
             if source is None or es2.glGetShaderParameter(shader, _GL_COMPILE_STATUS):
                 break
-            error_lines = {int(n) for n in _SHADER_ERROR.findall(_shader_info_log(shader))}
-            repaired = _repair_shader(source, error_lines)
+            errors = {}
+            for number, message in _SHADER_ERROR.findall(_shader_info_log(shader)):
+                errors.setdefault(int(number), []).append(message)
+            repaired = _repair_shader(source, errors)
             if repaired == source:
                 break
             source = repaired
