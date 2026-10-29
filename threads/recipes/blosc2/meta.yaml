@@ -1,0 +1,28 @@
+package:
+  name: blosc2
+  version: 4.11.0
+  top-level:
+    - blosc2
+source:
+  url: https://files.pythonhosted.org/packages/source/b/blosc2/blosc2-4.11.0.tar.gz
+  sha256: 3c610b076ad0422d861ff10732013c7c3461135968c3c442630542e71249a4a2
+build:
+  # CMake < 4 and no stripping on install, as for pyzmq
+  backend-flags: |
+    skbuild.cmake.define.WITH_OPTIM=OFF
+    skbuild.cmake.version=>=3.15,<4
+    skbuild.install.strip=false
+  script: |
+    export PATH="$(pixi exec --spec 'cmake<4' -- sh -c 'dirname "$(command -v cmake)"'):$PATH"
+requirements:
+  host:
+    - numpy
+  run:
+    - numpy
+    - msgpack
+    - ndindex
+about:
+  home: https://github.com/Blosc/python-blosc2
+  PyPI: https://pypi.org/project/blosc2
+  summary: A fast & compressed ndarray library with a flexible compute engine.
+  license: BSD-3-Clause

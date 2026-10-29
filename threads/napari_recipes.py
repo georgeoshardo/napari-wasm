@@ -8,6 +8,8 @@ skimage.restoration uses it) and networkx, whose recipe lists matplotlib.
 Every recipe is linked from build/threads/recipes/packages except the ones
 rewritten here; the dropped packages are registered as installed when napari
 is installed (wasm_shims.install_napari), and pure-Python ones come from PyPI.
+The recipes in threads/recipes (newer versions, and packages pyodide-recipes
+doesn't have) take the place of pyodide-recipes' own.
 """
 
 import re
@@ -15,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "build" / "threads" / "recipes" / "packages"
+OWN = ROOT / "threads" / "recipes"
 TARGET = ROOT / "build" / "threads" / "napari-recipes"
 
 # recipe -> runtime dependencies to keep (the compiled ones napari needs)
@@ -41,5 +44,13 @@ for recipe in sorted(SOURCE.iterdir()):
         (link / "meta.yaml").write_text(meta)
         print(f"{recipe.name}: run dependencies {RUN_DEPENDENCIES[recipe.name]}")
     elif not link.exists():
+        link.symlink_to(recipe)
+for recipe in sorted(OWN.iterdir()):
+    if not (recipe / "meta.yaml").exists():
+        continue
+    link = TARGET / recipe.name
+    if link.is_symlink() and link.resolve() != recipe:
+        link.unlink()
+    if not link.exists():
         link.symlink_to(recipe)
 print(TARGET)
