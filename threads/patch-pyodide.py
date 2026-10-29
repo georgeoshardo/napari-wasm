@@ -7,6 +7,10 @@ Usage: python threads/patch-pyodide.py <pyodide-dir> [<existing-emsdk-dir>]
   with `pyodide build-recipes` in this checkout get the same flags, which they
   need: a module built without shared memory can't be loaded into one built
   with it.
+- Pyodide's trimming of pyodide.asm.js is replaced so that it keeps the lines
+  a threaded build needs and sets up the workers (fix_asm_js.py), and the
+  workers are told where pyodide.asm.js is.
+- The sqlite3 recipe links Emscripten's threaded sqlite.
 - The main module pre-starts a pool of workers. Starting a thread waits for its
   worker, and a browser only starts a new worker once the main thread returns
   to the event loop, so without a pool the first thread start hangs.
@@ -41,6 +45,26 @@ replace_once(envs, "\t-s MAIN_MODULE=1 \\",
              f"\t-s MAIN_MODULE=1 \\\n\t-s PTHREAD_POOL_SIZE={POOL_SIZE} \\")
 replace_once(root / "cpython" / "Makefile", "\t\t\t  --disable-ipv6 \\",
              "\t\t\t  --disable-ipv6 \\\n\t\t\t  --enable-wasm-pthreads \\")
+# Emscripten starts each worker from the URL of the script that defined the
+# runtime, which it takes from document.currentScript; Pyodide loads
+# pyodide.asm.js with import(), where that's empty, so pass the URL instead
+replace_once(root / "src" / "js" / "emscripten-settings.ts",
+             "    thisProgram: config._sysExecutable,\n",
+             "    thisProgram: config._sysExecutable,\n"
+             "    // @ts-ignore\n"
+             "    mainScriptUrlOrBlob: `${config.indexURL}pyodide.asm.js`,\n")
+# the sqlite3 recipe links Emscripten's single-threaded sqlite port by name
+sqlite = root / "packages" / "sqlite3" / "meta.yaml"
+replace_once(sqlite, "embuilder build sqlite3 --pic", "embuilder build sqlite3-mt --pic")
+replace_once(sqlite, "-sUSE_SQLITE3 -lsqlite3\n", "-sUSE_SQLITE3 -lsqlite3-mt\n")
+# Pyodide cuts the last 7 lines of pyodide.asm.js to drop Emscripten's
+# module-export block; in a threaded build that cuts the lines that start the
+# runtime in each worker instead. fix_asm_js.py does it properly and sets the
+# workers up.
+fix_asm_js = Path(__file__).resolve().parent / "fix_asm_js.py"
+replace_once(root / "Makefile",
+             "\t$(SED) -i -n -e :a -e '1,7!{P;N;D;};N;ba' dist/pyodide.asm.js",
+             f"\tpython3 {fix_asm_js} dist/pyodide.asm.js")
 
 if len(sys.argv) > 2:
     emsdk = root / "emsdk" / "emsdk"

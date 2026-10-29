@@ -4,6 +4,7 @@
 # Usage, from the repo root:
 #   pixi run --manifest-path qt-build/pixi.toml bash threads/build.sh             # Pyodide
 #   pixi run --manifest-path qt-build/pixi.toml bash threads/build.sh numpy       # a package
+#   pixi run --manifest-path qt-build/pixi.toml bash threads/build.sh --make dist/pyodide.asm.js
 #
 # Expects build/threads/pyodide to be a Pyodide 0.29.3 checkout patched with
 # threads/patch-pyodide.py.
@@ -24,6 +25,9 @@ export EMCC_CORES="${EMCC_CORES:-12}"
 cd "$PYODIDE"
 if [ $# -eq 0 ]; then
     make all-but-packages
+elif [ "$1" = "--make" ]; then
+    shift
+    make "$@"
 else
     pyodide build-recipes "$@" --recipe-dir packages --install --install-dir dist --n-jobs "$PYODIDE_JOBS"
 fi
