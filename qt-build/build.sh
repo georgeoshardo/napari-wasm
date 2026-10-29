@@ -277,7 +277,7 @@ build_pyqt_modules() {
     export QMAKE="$QT_INSTALL/bin/qmake6"
 
     # WASM cross-compilation: can't run config test executables on host.
-    export PYQT_WASM_FEATURES="QtCore=$PYQT_CORE_DISABLED;QtGui=PyQt_XCB,PyQt_Wayland,PyQt_Vulkan;QtWidgets=;QtSvg=;QtSvgWidgets=;QtOpenGL=;QtOpenGLWidgets="
+    export PYQT_WASM_FEATURES="QtCore=$PYQT_CORE_DISABLED;QtGui=PyQt_XCB,PyQt_Wayland,PyQt_Vulkan;QtWidgets=;QtSvg=;QtSvgWidgets=;QtOpenGL=;QtOpenGLWidgets=;QtPrintSupport="
 
     sip-build \
         --verbose \
@@ -298,7 +298,6 @@ build_pyqt_modules() {
         --disable QtPdf \
         --disable QtPdfWidgets \
         --disable QtPositioning \
-        --disable QtPrintSupport \
         --disable QtQml \
         --disable QtQuick \
         --disable QtQuick3D \
@@ -383,6 +382,7 @@ $pyqt_build/QtSvgWidgets/libQtSvgWidgets.a
 $pyqt_build/QtXml/libQtXml.a
 $pyqt_build/QtOpenGL/libQtOpenGL.a
 $pyqt_build/QtOpenGLWidgets/libQtOpenGLWidgets.a
+$pyqt_build/QtPrintSupport/libQtPrintSupport.a
 $sip_build/libsip.a
 
 # Qt plugin import object and threading stubs
@@ -398,6 +398,7 @@ $qt_lib/libQt6SvgWidgets.a
 $qt_lib/libQt6Xml.a
 $qt_lib/libQt6OpenGL.a
 $qt_lib/libQt6OpenGLWidgets.a
+$qt_lib/libQt6PrintSupport.a
 
 # Qt6 bundled third-party libs
 $qt_lib/libQt6BundledHarfbuzz.a

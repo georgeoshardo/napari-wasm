@@ -398,6 +398,7 @@ extern PyObject *PyInit_QtSvgWidgets();
 extern PyObject *PyInit_QtXml();
 extern PyObject *PyInit_QtOpenGL();
 extern PyObject *PyInit_QtOpenGLWidgets();
+extern PyObject *PyInit_QtPrintSupport();
 extern PyObject *PyInit_sip();
 
 /* Create a namespace package for PyQt6 */
@@ -433,6 +434,7 @@ static void register_pyqt6_modules(void) {
     PyImport_AppendInittab("PyQt6.QtXml", PyInit_QtXml);
     PyImport_AppendInittab("PyQt6.QtOpenGL", PyInit_QtOpenGL);
     PyImport_AppendInittab("PyQt6.QtOpenGLWidgets", PyInit_QtOpenGLWidgets);
+    PyImport_AppendInittab("PyQt6.QtPrintSupport", PyInit_QtPrintSupport);
 }
 
 """
@@ -446,6 +448,19 @@ static void register_pyqt6_modules(void) {
         )
         main_c.write_text(text)
         print("  Patched main.c")
+    elif "PyInit_QtPrintSupport" not in text:
+        # patched before QtPrintSupport was added
+        text = text.replace(
+            "extern PyObject *PyInit_sip();",
+            "extern PyObject *PyInit_QtPrintSupport();\nextern PyObject *PyInit_sip();",
+        )
+        text = text.replace(
+            '    PyImport_AppendInittab("PyQt6.QtOpenGLWidgets", PyInit_QtOpenGLWidgets);\n',
+            '    PyImport_AppendInittab("PyQt6.QtOpenGLWidgets", PyInit_QtOpenGLWidgets);\n'
+            '    PyImport_AppendInittab("PyQt6.QtPrintSupport", PyInit_QtPrintSupport);\n',
+        )
+        main_c.write_text(text)
+        print("  Added QtPrintSupport to main.c")
     else:
         print("  main.c already patched")
 
