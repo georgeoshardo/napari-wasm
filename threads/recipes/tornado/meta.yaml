@@ -1,0 +1,15 @@
+package:
+  name: tornado
+  version: "6.6"
+  top-level:
+    - tornado
+source:
+  url: https://files.pythonhosted.org/packages/d0/02/5f549b1ad5da6267ed1e1fac2eef69257b1979cc812497002499b7895ff9/tornado-6.6.tar.gz
+  sha256: 34c4aa916d7f2b2d5cadee2c6850f5a4a7f3d688cbf58399ea9bd3057af4abd5
+build:
+  script: |
+    # tornado publishes only compiled wheels; its C speedups are optional
+    export TORNADO_EXTENSION=0
+about:
+  home: https://www.tornadoweb.org
+  license: Apache-2.0
