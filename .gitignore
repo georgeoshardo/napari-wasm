@@ -5,3 +5,7 @@ __pycache__/
 .DS_Store
 web/wheels/
 data/
+threads/recipes/*/build/
+threads/recipes/*/dist/
+threads/recipes/*/build.log
+threads/rust-test/target/
