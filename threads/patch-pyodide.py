@@ -46,6 +46,9 @@ replace_once(envs, "export LDFLAGS_BASE=\\\n\t$(OPTFLAGS) \\",
              "export LDFLAGS_BASE=\\\n\t-pthread \\\n\t$(OPTFLAGS) \\")
 replace_once(envs, "\t-s MAIN_MODULE=1 \\",
              f"\t-s MAIN_MODULE=1 \\\n\t-s PTHREAD_POOL_SIZE={POOL_SIZE} \\")
+# Pyodide links Emscripten's native libraries by hand (AUTO_NATIVE_LIBRARIES=0);
+# with threads, Qt's use of the html5 API needs the C half of it as well
+replace_once(envs, "\t-lGL \\\n", "\t-lGL \\\n\t-lhtml5 \\\n")
 replace_once(root / "cpython" / "Makefile", "\t\t\t  --disable-ipv6 \\",
              "\t\t\t  --disable-ipv6 \\\n\t\t\t  --enable-wasm-pthreads \\")
 # Emscripten starts each worker from the URL of the script that defined the

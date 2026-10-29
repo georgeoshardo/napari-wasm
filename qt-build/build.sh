@@ -426,6 +426,18 @@ $qt_objects/Widgets_resources_3/.qt/rcc/qrc_qstyle_fusion_init.cpp.o
 $qt_objects/Widgets_resources_4/.qt/rcc/qrc_qmessagebox_init.cpp.o
 LDFLAGS
 
+    # Qt bundles some third-party libraries only when configure doesn't find
+    # them (a threaded build uses Emscripten's zlib, which Pyodide links), so
+    # keep the files this Qt build actually produced
+    local listed="$BUILD_DIR/pyqt6-ldflags.txt"
+    while IFS= read -r line; do
+        case "$line" in
+            /*) [ -e "$line" ] && echo "$line" || log "  not built, left out: $line" >&2 ;;
+            *) echo "$line" ;;
+        esac
+    done < "$listed" > "$listed.tmp"
+    mv "$listed.tmp" "$listed"
+
     # Step 2: Patch Pyodide source (main.c + Makefile.envs)
     log "Patching Pyodide source..."
     python3 "$PATCHES_DIR/apply-wasm-patches.py" \

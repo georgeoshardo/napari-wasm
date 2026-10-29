@@ -81,8 +81,11 @@ replace_once(
     "var instance=new WebAssembly.Instance(module,getWasmImports());",
     f"var instance=new WebAssembly.Instance(module,{{...getWasmImports(),sentinel:{WORKER_SENTINEL}}});",
 )
-replace_once(
-    "if(!initializedJS){initializedJS=true}",
-    f"if(!initializedJS){{initializedJS=true;{WORKER_FIRST_RUN}}}",
+# the block's contents depend on what's linked (embind adds its own set-up)
+first_run = re.compile(r"if\(!initializedJS\)\{([^{}]*?)initializedJS=true\}")
+text, count = first_run.subn(
+    lambda m: f"if(!initializedJS){{{m.group(1)}initializedJS=true;{WORKER_FIRST_RUN}}}", text
 )
+if count != 1:
+    sys.exit(f"{path}: expected one worker first-run block, found {count}")
 path.write_text(text)
