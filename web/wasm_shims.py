@@ -22,6 +22,10 @@ the browser build rather than changing behaviour:
   Windows; glyphs are drawn with Qt instead of FreeType, and the DPI is CSS's
   96.
 * vispy's Cython distance-field function is replaced with a scipy one.
+* Pyodide gives every thread its browser event loop, which only runs on the
+  main thread. Other threads get asyncio's selector loop instead, woken
+  through a pipe since Emscripten has no socket pairs (the threaded build's
+  pipes work across threads).
 """
 
 from __future__ import annotations
@@ -43,9 +47,96 @@ def install():
     _install_vispy_fonts()
     _install_vispy_dpi()
     _install_vispy_sdf()
+    _install_thread_event_loops()
 
 
 # --- Qt threads ---------------------------------------------------------------
+
+
+def _install_thread_event_loops():
+    import asyncio
+    import os
+    import threading
+
+    from pyodide.webloop import WebLoopPolicy
+
+    if isinstance(asyncio.get_event_loop_policy(), _ThreadedLoopPolicy):
+        return
+
+    class PipeEnd:
+        """The part of a socket asyncio uses to wake its loop."""
+
+        def __init__(self, fd):
+            self._fd = fd
+
+        def fileno(self):
+            return self._fd
+
+        def setblocking(self, flag):
+            os.set_blocking(self._fd, flag)
+
+        def recv(self, size):
+            return os.read(self._fd, size)
+
+        def send(self, data):
+            return os.write(self._fd, data)
+
+        def close(self):
+            os.close(self._fd)
+
+    class ThreadLoop(asyncio.SelectorEventLoop):
+        def _make_self_pipe(self):
+            read_fd, write_fd = os.pipe()
+            self._ssock, self._csock = PipeEnd(read_fd), PipeEnd(write_fd)
+            self._ssock.setblocking(False)
+            self._csock.setblocking(False)
+            self._internal_fds += 1
+            self._add_reader(self._ssock.fileno(), self._read_from_self)
+
+    class Policy(WebLoopPolicy, _ThreadedLoopPolicy):
+        def __init__(self, main_loop):
+            super().__init__()
+            self._default_loop = main_loop
+            self._local = threading.local()
+
+        def get_event_loop(self):
+            if threading.current_thread() is threading.main_thread():
+                return super().get_event_loop()
+            loop = getattr(self._local, "loop", None)
+            if loop is None:
+                raise RuntimeError(
+                    f"There is no current event loop in thread {threading.current_thread().name!r}."
+                )
+            return loop
+
+        def new_event_loop(self):
+            if threading.current_thread() is threading.main_thread():
+                return super().new_event_loop()
+            return ThreadLoop()
+
+        def set_event_loop(self, loop):
+            if threading.current_thread() is threading.main_thread():
+                super().set_event_loop(loop)
+            else:
+                self._local.loop = loop
+
+    asyncio.set_event_loop_policy(Policy(asyncio.get_event_loop_policy()._default_loop))
+
+    # Pyodide's asyncio.run reads its JavaScript config, which a thread other
+    # than the main one can't touch
+    pyodide_run = asyncio.run
+
+    def run(main, *, debug=None, loop_factory=None):
+        if threading.current_thread() is threading.main_thread():
+            return pyodide_run(main, debug=debug, loop_factory=loop_factory)
+        with asyncio.Runner(debug=debug, loop_factory=loop_factory) as runner:
+            return runner.run(main)
+
+    asyncio.run = run
+
+
+class _ThreadedLoopPolicy:
+    """Marks the event loop policy installed by _install_thread_event_loops."""
 
 
 def _install_qt_thread_stand_ins():
