@@ -16,6 +16,9 @@ Usage: python threads/patch-pyodide.py <pyodide-dir> [<existing-emsdk-dir>]
 - Calls from JavaScript into Python take the GIL and give it back, and the
   main thread doesn't hold it otherwise, so other threads can run while the
   browser has control.
+- A package's libraries are loaded in an order where each comes after the ones
+  it needs, so that each has its own dlopen, whose file the other threads load
+  from memory.
 - The main module pre-starts a pool of workers, sized to the machine. Starting a
   thread waits for its worker, and a browser only starts a new worker once the
   main thread returns to the event loop, so a thread started while the main
@@ -152,6 +155,95 @@ replace_once(root / "src" / "js" / "api.ts",
              "  bootstrapFinalized!();\n"
              "  API.releaseStartupGil();\n"
              "  return pyodide;\n};")
+# A library that only gets loaded as another library's dependency (pyarrow's
+# modules need libarrow_python.so, which sorts after them in the wheel) has no
+# copy of its file in memory; a thread catching up with the libraries the main
+# thread loaded looks for it over HTTP instead, fails, and aborts. So a
+# package's libraries are loaded in an order where each comes after the ones it
+# needs, each with its own dlopen.
+NEEDED_FIRST = '''
+def _needed_dynlibs(path: Path) -> list[str]:
+    """The libraries a wasm library needs, from the dylink.0 section at its start."""
+    with open(path, "rb") as file:
+        header = file.read(4096)
+
+    def leb(offset: int) -> tuple[int, int]:
+        result = shift = 0
+        while True:
+            byte = header[offset]
+            offset += 1
+            result |= (byte & 0x7F) << shift
+            shift += 7
+            if byte < 0x80:
+                return result, offset
+
+    def string(offset: int) -> tuple[str, int]:
+        length, offset = leb(offset)
+        return header[offset : offset + length].decode(), offset + length
+
+    try:
+        if header[:4] != b"\\0asm" or header[8] != 0:
+            return []
+        size, offset = leb(9)
+        end = offset + size
+        name, offset = string(offset)
+        if name != "dylink.0":
+            return []
+        while offset < end:
+            kind = header[offset]
+            length, offset = leb(offset + 1)
+            if kind == 2:  # WASM_DYLINK_NEEDED
+                count, offset = leb(offset)
+                needed = []
+                for _ in range(count):
+                    lib, offset = string(offset)
+                    needed.append(lib)
+                return needed
+            offset += length
+    except (IndexError, UnicodeDecodeError):
+        pass
+    return []
+
+
+def _needed_first(paths: list[Path]) -> list[Path]:
+    """The libraries in an order where each comes after the ones it needs."""
+    by_name = {path.name: path for path in paths}
+    ordered: list[Path] = []
+    visited: set[Path] = set()
+
+    def visit(path: Path) -> None:
+        if path in visited:
+            return
+        visited.add(path)
+        for name in _needed_dynlibs(path):
+            if name in by_name:
+                visit(by_name[name])
+        ordered.append(path)
+
+    for path in paths:
+        visit(path)
+    return ordered
+
+
+def get_dynlibs('''
+loader = root / "src" / "py" / "pyodide" / "_package_loader.py"
+replace_once(loader, "\ndef get_dynlibs(", NEEDED_FIRST)
+replace_once(loader,
+             "    return [\n"
+             "        str((target_dir / path).resolve())\n"
+             "        for path in dynlib_paths_iter\n"
+             "        if should_load_dynlib(path)\n"
+             "    ]\n",
+             "    return [\n"
+             "        str(path)\n"
+             "        for path in _needed_first(\n"
+             "            [\n"
+             "                (target_dir / path).resolve()\n"
+             "                for path in dynlib_paths_iter\n"
+             "                if should_load_dynlib(path)\n"
+             "            ]\n"
+             "        )\n"
+             "    ]\n")
 # the sqlite3 recipe links Emscripten's single-threaded sqlite port by name, in
 # Pyodide's own recipes and in pyodide-recipes (build/threads/recipes) if there
 for recipes in [root / "packages", root.parent / "recipes" / "packages"]:
