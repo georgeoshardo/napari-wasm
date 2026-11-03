@@ -5,22 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>napari in the browser</title>
   <style>
-    :root { --bg: #262930; --fg: #f0f1f2; }
+    :root { --bg: #262930; --fg: #f0f1f2; --muted: #9ea4ad; --accent: #50a2f1; }
     html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
                  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
     #qt-container { position: fixed; inset: 0; }
     #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
                background: var(--bg); z-index: 10; }
     #loading .box { width: 16rem; text-align: center; }
-    #status { color: var(--fg); }
+    #status { color: var(--muted); }
     #status.error { color: #ff7b72; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 13px; }
+    .bar { height: 3px; background: #3a3f48; border-radius: 2px; overflow: hidden; margin: 1rem 0; }
+    /* a transform, which the browser animates while Python keeps the page busy */
+    .bar div { height: 100%; width: 30%; background: var(--accent); animation: slide 1.4s ease-in-out infinite; }
+    @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(334%); } }
   </style>
 </head>
 <body>
   <div id="qt-container"></div>
   <div id="loading">
     <div class="box">
-      <p id="status">Loading</p>
+      <div class="bar"><div></div></div>
+      <p id="status">Loading Python</p>
     </div>
   </div>
 
@@ -28,8 +33,17 @@
     import { loadPyodide } from "./qt-build/build/sources/pyodide/dist/pyodide.mjs";
 
     const statusEl = document.getElementById("status");
-    window.napariStatus = (text) => console.log(text);
+    window.napariStatus = (text) => { statusEl.textContent = text; console.log(text); };
     window.napariReady = () => document.getElementById("loading").remove();
+    const fail = (error) => {
+      console.error(error);
+      statusEl.classList.add("error");
+      statusEl.textContent = `napari failed to start:\n${error}`;
+      document.querySelector(".bar")?.remove();
+    };
+    // a fatal error in Python is thrown from the event loop, outside the try below
+    window.addEventListener("error", (event) => fail(event.error ?? event.message));
+    window.addEventListener("unhandledrejection", (event) => fail(event.reason));
 
     try {
       const pyodide = await loadPyodide({
@@ -46,13 +60,12 @@
         const source = await (await fetch(`./web/${module}`)).text();
         pyodide.FS.writeFile(`${sitePackages}/${module}`, source);
       }
+      napariStatus("Loading NumPy");
       await pyodide.loadPackage(["micropip", "numpy"]);  // wasm_shims imports numpy
       const app = await (await fetch("./web/app.py")).text();
       await pyodide.runPythonAsync(app, { filename: "app.py" });
     } catch (error) {
-      console.error(error);
-      statusEl.classList.add("error");
-      statusEl.textContent = `napari failed to start:\n${error}`;
+      fail(error);
     }
   </script>
 </body>
