@@ -364,7 +364,25 @@ build_pyodide() {
 
     mkdir -p "$OUTPUT_DIR"
 
-    # Step 1: Generate link flags file (needed before patching Makefile.envs)
+    # Step 1: Compile Qt plugin import file and threading stubs, which the link
+    # flags below list only if they exist
+    log "Compiling Qt plugin imports and stubs..."
+    local qt_include="$QT_INSTALL/include"
+    em++ \
+        -fPIC $PTHREAD_FLAG \
+        -std=gnu++17 \
+        -DQT_STATIC \
+        -I"$qt_include" \
+        -I"$qt_include/QtCore" \
+        -I"$qt_include/QtGui" \
+        -c "$PATCHES_DIR/qt_plugin_import.cpp" \
+        -o "$BUILD_DIR/qt_plugin_import.o"
+    emcc \
+        -fPIC $PTHREAD_FLAG \
+        -c "$PATCHES_DIR/qt_wasm_stubs.c" \
+        -o "$BUILD_DIR/qt_wasm_stubs.o"
+
+    # Step 2: Generate link flags file (needed before patching Makefile.envs)
     log "Generating link flags..."
     local qt_lib="$QT_INSTALL/lib"
     local qt_plugins="$QT_INSTALL/plugins"
@@ -433,34 +451,17 @@ LDFLAGS
     local listed="$BUILD_DIR/pyqt6-ldflags.txt"
     while IFS= read -r line; do
         case "$line" in
-            /*) [ -e "$line" ] && echo "$line" || log "  not built, left out: $line" >&2 ;;
+            */libQt6Bundled*.a) [ -e "$line" ] && echo "$line" || log "  not built, left out: $line" >&2 ;;
             *) echo "$line" ;;
         esac
     done < "$listed" > "$listed.tmp"
     mv "$listed.tmp" "$listed"
 
-    # Step 2: Patch Pyodide source (main.c + Makefile.envs)
+    # Step 3: Patch Pyodide source (main.c + Makefile.envs)
     log "Patching Pyodide source..."
     python3 "$PATCHES_DIR/apply-wasm-patches.py" \
         --pyodide "$PYODIDE_REPO" \
         --build-dir "$BUILD_DIR"
-
-    # Step 3: Compile Qt plugin import file and threading stubs
-    log "Compiling Qt plugin imports and stubs..."
-    local qt_include="$QT_INSTALL/include"
-    em++ \
-        -fPIC $PTHREAD_FLAG \
-        -std=gnu++17 \
-        -DQT_STATIC \
-        -I"$qt_include" \
-        -I"$qt_include/QtCore" \
-        -I"$qt_include/QtGui" \
-        -c "$PATCHES_DIR/qt_plugin_import.cpp" \
-        -o "$BUILD_DIR/qt_plugin_import.o"
-    emcc \
-        -fPIC $PTHREAD_FLAG \
-        -c "$PATCHES_DIR/qt_wasm_stubs.c" \
-        -o "$BUILD_DIR/qt_wasm_stubs.o"
 
     # Step 4: Download emdawnwebgpu local port
     local dawn_version="v20260219.200501"
