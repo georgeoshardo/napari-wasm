@@ -47,6 +47,9 @@ about:
   summary: Python library for Apache Arrow
   license: Apache-2.0
 requirements:
+  # pyarrow 22's bindings predate Cython 3.3, which refuses some of their nogil code
+  constraint:
+    - cython < 3.3
   run:
     - numpy
     - pandas
