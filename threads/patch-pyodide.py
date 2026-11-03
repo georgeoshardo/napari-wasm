@@ -16,9 +16,10 @@ Usage: python threads/patch-pyodide.py <pyodide-dir> [<existing-emsdk-dir>]
 - Calls from JavaScript into Python take the GIL and give it back, and the
   main thread doesn't hold it otherwise, so other threads can run while the
   browser has control.
-- The main module pre-starts a pool of workers. Starting a thread waits for its
-  worker, and a browser only starts a new worker once the main thread returns
-  to the event loop, so without a pool the first thread start hangs.
+- The main module pre-starts a pool of workers, sized to the machine. Starting a
+  thread waits for its worker, and a browser only starts a new worker once the
+  main thread returns to the event loop, so a thread started while the main
+  thread waits needs a worker from the pool.
 - With an existing Emscripten 4.0.9 toolchain built by another Pyodide 0.29.3
   checkout, that one is linked in instead of building a new one, and ccache is
   left out as in the Qt build.
@@ -28,7 +29,8 @@ import shutil
 import sys
 from pathlib import Path
 
-POOL_SIZE = 8
+# one worker per core, plus room for Python's, Qt's and ZeroMQ's own threads
+POOL_SIZE = "navigator.hardwareConcurrency+8"
 
 
 def replace_once(path, old, new):

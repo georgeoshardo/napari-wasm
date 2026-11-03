@@ -32,6 +32,11 @@ the browser build rather than changing behaviour:
   Pyodide's always is. The request runs as an eager task on the main thread
   instead: ordinary code finishes at once, code with top-level ``await``
   finishes in the browser's event loop.
+* In a browser a thread can only start on a worker that is already running
+  while the main thread waits for it, and the threaded build starts one per
+  core plus a few. polars starts three pools of about one thread per core (and
+  more for blocking work), so they get a third of the cores each and a small
+  blocking pool, through polars' own settings.
 """
 
 from __future__ import annotations
@@ -55,6 +60,7 @@ def install():
     _install_vispy_sdf()
     _install_thread_event_loops()
     _install_inprocess_kernel_dispatch()
+    _configure_polars_threads()
 
 
 # --- Qt threads ---------------------------------------------------------------
@@ -142,6 +148,22 @@ def _install_thread_event_loops():
             return runner.run(main)
 
     asyncio.run = run
+
+
+def _configure_polars_threads():
+    import os
+
+    if sys.platform != "emscripten":
+        return
+    import js
+
+    per_pool = str(max(1, int(js.navigator.hardwareConcurrency) // 3))
+    for name, value in [
+        ("POLARS_MAX_THREADS", per_pool),
+        ("POLARS_ASYNC_THREAD_COUNT", per_pool),
+        ("POLARS_MAX_BLOCKING_THREAD_COUNT", "2"),
+    ]:
+        os.environ.setdefault(name, value)
 
 
 def _install_inprocess_kernel_dispatch():
