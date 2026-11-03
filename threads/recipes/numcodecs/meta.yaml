@@ -17,7 +17,10 @@ requirements:
   host:
     - numpy
   run:
+    - deprecated
     - numpy
+    # numcodecs imports its LZMA codec unconditionally
+    - lzma
 about:
   home: https://github.com/zarr-developers/numcodecs
   PyPI: https://pypi.org/project/numcodecs
