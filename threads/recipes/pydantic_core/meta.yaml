@@ -1,0 +1,26 @@
+package:
+  name: pydantic_core
+  version: 2.46.5
+  tag:
+    - rust
+  # pydantic pins pydantic_core: this is the one mm_track's pydantic needs
+  top-level:
+    - pydantic_core
+source:
+  url: https://files.pythonhosted.org/packages/af/f9/8a06bea35ef8daf588f707784c973a7046e0034c8d8cfb08828eeffb8b75/pydantic_core-2.46.5.tar.gz
+  sha256: 10416c15b8839ecc4ef4d0885da76da6fd0f67333a0eb8aff6d93c4b8f2910fc
+build:
+  # built with RUST_TOOLCHAIN=nightly-2026-08-18, as polars is: wasm exceptions
+  # are that toolchain's default, so -Z emscripten-wasm-eh is gone
+  script: |
+    export RUSTFLAGS="-C link-arg=-sSIDE_MODULE=2 -Z link-native-libraries=yes -C target-feature=+atomics,+bulk-memory,+mutable-globals"
+requirements:
+  run:
+    - typing-extensions
+  executable:
+    - rustup
+about:
+  home: https://github.com/pydantic/pydantic-core
+  PyPI: https://pypi.org/project/pydantic_core
+  summary: ""
+  license: MIT
