@@ -149,6 +149,9 @@ export RUSTFLAGS="-C link-arg=-sSIDE_MODULE=2 -Z link-native-libraries=yes -C ta
 # polars' release profile uses fat LTO, which crashed rustc in polars-pyodide's
 # wasm builds
 export CARGO_PROFILE_RELEASE_LTO=off
+# and keeps line tables, for which the linker keeps the function names: 124 MB
+# of the module, which the browser holds several copies of while loading it
+export CARGO_PROFILE_RELEASE_DEBUG=false
 
 rustup toolchain install "$TOOLCHAIN" --profile minimal --component rust-src --target wasm32-unknown-emscripten
 cd "$SRC/py-polars/runtime/polars-runtime-32"
