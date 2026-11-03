@@ -38,6 +38,9 @@ the browser build rather than changing behaviour:
   more for blocking work), so they get a third of the cores each and a small
   blocking pool, through polars' own settings, and zarr's pool for blocking
   work (by default the cores plus four) gets a third of the cores too.
+* Emscripten's file system has no hard links, which zarr's local store moves a
+  file with when it mustn't replace one; the file it moves to is created
+  exclusively instead, and the file renamed over it.
 """
 
 from __future__ import annotations
@@ -62,6 +65,50 @@ def install():
     _install_thread_event_loops()
     _install_inprocess_kernel_dispatch()
     _configure_thread_pools()
+    _install_zarr_exclusive_moves()
+
+
+def _after_import(name, patch):
+    """Call ``patch`` with the module ``name`` once it is imported."""
+    if name in sys.modules:
+        patch(sys.modules[name])
+        return
+    import importlib.abc
+    import importlib.util
+
+    class Finder(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path, target=None):
+            if fullname != name:
+                return None
+            sys.meta_path.remove(self)
+            spec = importlib.util.find_spec(fullname)
+            exec_module = spec.loader.exec_module
+
+            def exec_and_patch(module):
+                exec_module(module)
+                patch(module)
+
+            spec.loader.exec_module = exec_and_patch
+            return spec
+
+    sys.meta_path.insert(0, Finder())
+
+
+def _install_zarr_exclusive_moves():
+    import os
+
+    if hasattr(os, "link"):
+        return
+
+    def patch(local):
+        def safe_move(src, dst):
+            # raises FileExistsError if dst exists, as os.link does
+            os.close(os.open(dst, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            os.replace(src, dst)
+
+        local._safe_move = safe_move
+
+    _after_import("zarr.storage._local", patch)
 
 
 # --- Qt threads ---------------------------------------------------------------
