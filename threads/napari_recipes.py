@@ -9,7 +9,9 @@ Every recipe is linked from build/threads/recipes/packages except the ones
 rewritten here; the dropped packages are registered as installed when napari
 is installed (wasm_shims.install_napari), and pure-Python ones come from PyPI.
 The recipes in threads/recipes (newer versions, and packages pyodide-recipes
-doesn't have) take the place of pyodide-recipes' own.
+doesn't have) take the place of pyodide-recipes' own. A built library goes next
+to the recipe's real folder, so a recipe that builds against a library from
+threads/recipes has to be there too (google-crc32c with libcrc32c).
 """
 
 import re

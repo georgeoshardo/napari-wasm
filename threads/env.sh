@@ -12,8 +12,10 @@ export PATH="$emsdk_dir/upstream/emscripten:$emsdk_dir/upstream/bin:$emsdk_dir/n
 export PYODIDE_ROOT="$PYODIDE"
 export PYODIDE_JOBS="${PYODIDE_JOBS:-12}"
 # Every object must be built for shared memory, and some recipes set their own
-# CFLAGS, so have emcc add -pthread to every compile and link
-export EMCC_CFLAGS="${EMCC_CFLAGS:-} -pthread"
+# CFLAGS, so have emcc add -pthread to every compile and link. Side modules with
+# threads are what this build is; emcc's warning that they're experimental would
+# stop projects that build with -Werror.
+export EMCC_CFLAGS="${EMCC_CFLAGS:-} -pthread -Wno-experimental"
 # CMake 4 refuses projects declaring support for CMake < 3.5 (libyaml)
 export CMAKE_POLICY_VERSION_MINIMUM=3.5
 # Rust (a nightly with rust-src, installed in build/threads/rust): the standard

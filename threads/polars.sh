@@ -9,7 +9,7 @@
 # client), whose I/O layer, mio, has no Emscripten backend. The threaded build
 # has threads and a poll() that works across them (vfd.c), so mio, tokio and
 # reqwest are built for Emscripten as the musl system it is (patched copies,
-# below); nothing opens a socket in the browser. The OS clipboard and the
+# below), and ring for rustls; nothing opens a socket in the browser. The OS clipboard and the
 # custom allocator are left out, and the extension module is built for this
 # Python only (not abi3), as Pyodide's cross-build environment expects. The
 # wheel goes to build/threads/dist-polars; polars itself is pure Python and
@@ -29,17 +29,25 @@ if [ ! -d "$SRC" ]; then
 fi
 git -C "$SRC" checkout -q -- .
 mkdir -p "$CRATES"
-for crate in mio-1.2.2 tokio-1.53.1 reqwest-0.12.28; do
+for crate in mio-1.2.2 tokio-1.53.1 reqwest-0.12.28 ring-0.17.14; do
     rm -rf "${CRATES:?}/$crate"
     curl -sL "https://static.crates.io/crates/${crate%-*}/$crate.crate" | tar xz -C "$CRATES"
 done
+# polars takes object_store from a fork, at this commit
+OBJECT_STORE_REV="f50a6e5c564b2b5933eca15cd20ff9b5614374a1"
+rm -rf "$CRATES/object_store"
+git init -q "$CRATES/object_store"
+git -C "$CRATES/object_store" fetch -q --depth 1 https://github.com/kdn36/arrow-rs-object-store "$OBJECT_STORE_REV"
+git -C "$CRATES/object_store" checkout -q FETCH_HEAD
 
 python3 - "$CRATES" "$SRC" <<'EOF'
 import sys
 from pathlib import Path
 
 crates, src = Path(sys.argv[1]), Path(sys.argv[2])
-mio, tokio, reqwest = crates / "mio-1.2.2", crates / "tokio-1.53.1", crates / "reqwest-0.12.28"
+mio, tokio = crates / "mio-1.2.2", crates / "tokio-1.53.1"
+reqwest, ring = crates / "reqwest-0.12.28", crates / "ring-0.17.14"
+object_store = crates / "object_store"
 
 
 def replace(path, old, new, count=1):
@@ -68,18 +76,31 @@ replace(tokio / "Cargo.toml",
 replace(tokio / "src/net/unix/ucred.rs",
         '    target_os = "vita",\n    target_os = "hurd"\n))]',
         '    target_os = "vita",\n    target_os = "hurd",\n    target_os = "emscripten"\n))]', count=2)
-# reqwest: its native client (its browser one is built on wasm-bindgen, which
-# doesn't support Emscripten)
-for path in [reqwest / "Cargo.toml", *(reqwest / "src").rglob("*.rs")]:
+# reqwest and object_store: their native clients (the browser ones are built on
+# wasm-bindgen, which doesn't support Emscripten)
+for path in [
+    reqwest / "Cargo.toml", *(reqwest / "src").rglob("*.rs"),
+    object_store / "Cargo.toml", *(object_store / "src").rglob("*.rs"),
+]:
     text = path.read_text()
     if 'target_arch = "wasm32"' in text:
         path.write_text(text.replace(
             'target_arch = "wasm32"', 'all(target_arch = "wasm32", not(target_os = "emscripten"))'))
+# ring (rustls' crypto): random numbers from getrandom, which supports Emscripten
+replace(ring / "src/rand.rs", '    target_os = "dragonfly",\n', '    target_os = "dragonfly",\n    target_os = "emscripten",\n')
 replace(src / "Cargo.toml", "\n[patch.crates-io]\n",
         f'\n[patch.crates-io]\nmio = {{ path = "{mio}" }}\n'
-        f'tokio = {{ path = "{tokio}" }}\nreqwest = {{ path = "{reqwest}" }}\n')
+        f'tokio = {{ path = "{tokio}" }}\nreqwest = {{ path = "{reqwest}" }}\n'
+        f'ring = {{ path = "{ring}" }}\n')
+replace(src / "Cargo.toml",
+        'object_store = { git = "https://github.com/kdn36/arrow-rs-object-store", rev = "f50a6e5c564b2b5933eca15cd20ff9b5614374a1" }',
+        f'object_store = {{ path = "{object_store}" }}')
 
-# polars: no OS clipboard or custom allocator, and not abi3
+# polars: its file cache's file locking on Emscripten too (it's a Unix
+# filesystem), no OS clipboard or custom allocator, and not abi3
+replace(src / "crates/polars-io/Cargo.toml",
+        """[target.'cfg(not(target_family = "wasm"))'.dependencies]""",
+        """[target.'cfg(any(not(target_family = "wasm"), target_os = "emscripten"))'.dependencies]""")
 python_crate = src / "crates/polars-python/Cargo.toml"
 runtime_crate = src / "py-polars/runtime/polars-runtime-32/Cargo.toml"
 replace(python_crate, '  "clipboard",\n', "")

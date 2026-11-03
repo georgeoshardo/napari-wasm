@@ -17,7 +17,6 @@ requirements:
   host:
     - numpy
   run:
-    - deprecated
     - numpy
 about:
   home: https://github.com/zarr-developers/numcodecs
