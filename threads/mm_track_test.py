@@ -22,27 +22,30 @@ with open("/lib/python3.13/site-packages/wasm_shims.py", "w") as file:
 
 import wasm_shims
 
-# compiled dependencies that curation never imports: the ILP solver, image codecs,
-# a spatial index, an HTML cleaner and OpenCV (for the orthogonal views)
-for name, version in [
-    ("pyscipopt", "6.2.1"),
-    ("imagecodecs", "2026.8.16"),
-    ("rstar-python", "0.2.0"),
-    ("lxml-html-clean", "0.4.2"),
-    ("opencv-python-headless", "5.0.0.93"),
-]:
-    micropip.add_mock_package(name, version, modules={})
-
-# the mm_track wheel built from the fork (uv build --wheel), found in the listing
+# the mm_track wheel built from the fork, and the versions it is tested with
+# (threads/build_mm_track.py)
 listing = await (await js.fetch(f"{base}/../build/threads/dist-mmtrack/")).text()  # noqa: F704
 mm_track_wheel = re.search(r'href="(mm_track-[^"]+\.whl)"', listing).group(1)
+constraints = (
+    await (await js.fetch(f"{base}/../build/threads/dist-mmtrack/constraints.txt")).text()  # noqa: F704
+).split()
+versions = dict(line.split("==") for line in constraints)
+
+# compiled dependencies that curation never imports: the ILP solver, image codecs,
+# an HTML cleaner and OpenCV (for the orthogonal views)
+for name in ["pyscipopt", "imagecodecs", "lxml-html-clean", "opencv-python-headless"]:
+    micropip.add_mock_package(name, versions[name], modules={})
+
 start = time.perf_counter()
 await wasm_shims.install_napari(  # noqa: F704
     f"{base}/../web/wheels",
-    constraints=["pydantic==2.12.5"],
+    constraints=constraints,
     requirements=[
         f"{base}/../build/threads/dist-mmtrack/{mm_track_wheel}",
         f"{base}/../web/wheels/numba-0.67.0+python-py3-none-any.whl",
+        # the standard library module mm_track keeps its sessions in, which
+        # Pyodide ships as a package of its own
+        "sqlite3",
     ],
 )
 log(f"napari and mm_track installed in {time.perf_counter() - start:.1f} s")

@@ -475,21 +475,31 @@ async def install_napari(
     ``mocks`` adds (name, version) pairs to register as installed,
     ``requirements`` adds requirement strings and ``constraints`` limits the
     versions chosen, e.g. to keep a pure-Python package at the version matching
-    a compiled one in the lock file.
+    a compiled one in the lock file. A package registered as installed takes
+    the version a constraint pins, if one does.
     """
     import micropip
 
-    for name, mock_version in [
+    pinned = {}
+    for constraint in constraints:
+        name, _, pinned_version = constraint.partition("==")
+        if pinned_version:
+            pinned[re.sub(r"[-_.]+", "-", name).lower()] = pinned_version
+
+    def mock_version(name, default):
+        return pinned.get(re.sub(r"[-_.]+", "-", name).lower(), default)
+
+    for name, default in [
         ("psutil", "7.0.0"),
         *([] if console else [("napari-console", "0.1.4")]),
         ("freetype-py", "2.5.1"),
         *mocks,
     ]:
-        micropip.add_mock_package(name, mock_version)
+        micropip.add_mock_package(name, mock_version(name, default))
     if console:
         # ipykernel's debugger attaches over sockets, and debugpy's wheel holds
         # Linux libraries; with no module to import, ipykernel goes without it
-        micropip.add_mock_package("debugpy", "1.8.17", modules={})
+        micropip.add_mock_package("debugpy", mock_version("debugpy", "1.8.17"), modules={})
     await micropip.install(
         [
             f"napari=={version}",
