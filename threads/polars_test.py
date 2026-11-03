@@ -16,7 +16,7 @@ with open("/lib/python3.13/site-packages/wasm_shims.py", "w") as file:
 
 import wasm_shims
 
-wasm_shims._configure_polars_threads()  # as wasm_shims.install() does
+wasm_shims._configure_thread_pools()  # as wasm_shims.install() does
 
 import polars as pl
 

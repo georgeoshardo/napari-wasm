@@ -36,7 +36,8 @@ the browser build rather than changing behaviour:
   while the main thread waits for it, and the threaded build starts one per
   core plus a few. polars starts three pools of about one thread per core (and
   more for blocking work), so they get a third of the cores each and a small
-  blocking pool, through polars' own settings.
+  blocking pool, through polars' own settings, and zarr's pool for blocking
+  work (by default the cores plus four) gets a third of the cores too.
 """
 
 from __future__ import annotations
@@ -60,7 +61,7 @@ def install():
     _install_vispy_sdf()
     _install_thread_event_loops()
     _install_inprocess_kernel_dispatch()
-    _configure_polars_threads()
+    _configure_thread_pools()
 
 
 # --- Qt threads ---------------------------------------------------------------
@@ -150,7 +151,7 @@ def _install_thread_event_loops():
     asyncio.run = run
 
 
-def _configure_polars_threads():
+def _configure_thread_pools():
     import os
 
     if sys.platform != "emscripten":
@@ -162,6 +163,7 @@ def _configure_polars_threads():
         ("POLARS_MAX_THREADS", per_pool),
         ("POLARS_ASYNC_THREAD_COUNT", per_pool),
         ("POLARS_MAX_BLOCKING_THREAD_COUNT", "2"),
+        ("ZARR_THREADING__MAX_WORKERS", per_pool),
     ]:
         os.environ.setdefault(name, value)
 
