@@ -16,6 +16,11 @@ export PYODIDE_JOBS="${PYODIDE_JOBS:-12}"
 # threads are what this build is; emcc's warning that they're experimental would
 # stop projects that build with -Werror.
 export EMCC_CFLAGS="${EMCC_CFLAGS:-} -pthread -Wno-experimental"
+# auditwheel-emscripten resolves symlinks in a library's path but not in the
+# folder it vendors shared libraries into, so with the temporary directory under
+# a symlink (macOS's /var) the library's runtime path is wrong (google-crc32c)
+TMPDIR="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+export TMPDIR
 # CMake 4 refuses projects declaring support for CMake < 3.5 (libyaml)
 export CMAKE_POLICY_VERSION_MINIMUM=3.5
 # Rust (a nightly with rust-src, installed in build/threads/rust): the standard
