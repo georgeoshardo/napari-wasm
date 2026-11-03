@@ -19,7 +19,8 @@ Usage: python threads/patch-pyodide.py <pyodide-dir> [<existing-emsdk-dir>]
 - A package's libraries are loaded in an order where each comes after the ones
   it needs, so that each has its own dlopen, whose file the other threads load
   from memory, and Emscripten normalizes the paths it finds needed libraries at,
-  so that none is loaded twice.
+  so that none is loaded twice. Workers are given each library the main thread
+  compiles, so a thread starts without compiling them all again.
 - The main module pre-starts a pool of workers, sized to the machine. Starting a
   thread waits for its worker, and a browser only starts a new worker once the
   main thread returns to the event loop, so a thread started while the main
@@ -252,6 +253,68 @@ replace_once(loader,
 replace_once(root / "emsdk" / "emsdk" / "upstream" / "emscripten" / "src" / "lib" / "libdylink.js",
              "      return rpath.replace('$ORIGIN', origin);\n",
              "      return PATH.normalize(rpath.replace('$ORIGIN', origin));\n")
+# A thread loads every library the main thread has loaded before it starts, from
+# a compiled module if its worker has one: Emscripten gives the compiled modules
+# to workers as it creates them, and the pool's workers are created before any
+# library is loaded. Without one a thread copies each library out of memory and
+# compiles it, which with polars takes seconds and hundreds of MB per thread, so
+# each module the main thread compiles is passed to the workers there are.
+emscripten = root / "emsdk" / "emsdk" / "upstream" / "emscripten" / "src"
+replace_once(emscripten / "lib" / "libdylink.js",
+             "    '$updateTableMap',\n    '$wasmTable',\n    '$addOnPostCtor',\n  ],\n",
+             "    '$updateTableMap',\n    '$wasmTable',\n    '$addOnPostCtor',\n"
+             "#if PTHREADS\n    '$PThread',\n#endif\n  ],\n")
+replace_once(emscripten / "lib" / "libdylink.js",
+             "          sharedModules[libName] = module;\n",
+             "          sharedModules[libName] = module;\n"
+             "          for (var worker of PThread.unusedWorkers.concat(PThread.runningWorkers)) {\n"
+             "            worker.postMessage({cmd: 'sharedModule', libName, module});\n"
+             "          }\n")
+# After each library, Emscripten resolves the symbols no library has defined
+# yet, by going through every symbol any library has referenced: about 100,000
+# with mm_track's dependencies, twice as many passes as libraries, and each
+# thread makes them all again before it starts (seconds, and enough garbage to
+# run the browser out of memory with a dozen threads). The symbols not defined
+# yet are kept in their own set, in the same order, and only those are looked at.
+replace_once(emscripten / "lib" / "libdylink.js",
+             "  $GOT: {},\n",
+             "  $GOT: {},\n"
+             "  // the symbols in GOT that have no value yet, in the order they were added\n"
+             "  $unresolvedGOT: '=new Set()',\n")
+replace_once(emscripten / "lib" / "libdylink.js",
+             "  $GOTHandler__deps: ['$GOT', '$currentModuleWeakSymbols'],\n",
+             "  $GOTHandler__deps: ['$GOT', '$currentModuleWeakSymbols', '$unresolvedGOT'],\n")
+replace_once(emscripten / "lib" / "libdylink.js",
+             "        rtn = GOT[symName] = new WebAssembly.Global({'value': '{{{ POINTER_WASM_TYPE }}}', 'mutable': true});\n",
+             "        rtn = GOT[symName] = new WebAssembly.Global({'value': '{{{ POINTER_WASM_TYPE }}}', 'mutable': true});\n"
+             "        unresolvedGOT.add(symName);\n")
+replace_once(emscripten / "lib" / "libdylink.js",
+             "  $updateGOT__deps: ['$GOT', '$isInternalSym', '$addFunction'],\n",
+             "  $updateGOT__deps: ['$GOT', '$isInternalSym', '$addFunction', '$unresolvedGOT'],\n")
+replace_once(emscripten / "lib" / "libdylink.js",
+             "      GOT[symName] ||= new WebAssembly.Global({'value': '{{{ POINTER_WASM_TYPE }}}', 'mutable': true});\n"
+             "      if (replace || GOT[symName].value == 0) {\n",
+             "      if (!GOT[symName]) {\n"
+             "        GOT[symName] = new WebAssembly.Global({'value': '{{{ POINTER_WASM_TYPE }}}', 'mutable': true});\n"
+             "        unresolvedGOT.add(symName);\n"
+             "      }\n"
+             "      if (replace || GOT[symName].value == 0) {\n")
+replace_once(emscripten / "lib" / "libdylink.js",
+             "  $reportUndefinedSymbols__deps: ['$GOT', '$resolveGlobalSymbol'],\n",
+             "  $reportUndefinedSymbols__deps: ['$GOT', '$resolveGlobalSymbol', '$unresolvedGOT'],\n")
+replace_once(emscripten / "lib" / "libdylink.js",
+             "    for (var [symName, entry] of Object.entries(GOT)) {\n"
+             "      if (entry.value == 0) {\n",
+             "    for (var symName of unresolvedGOT) {\n"
+             "      var entry = GOT[symName];\n"
+             "      if (entry.value != 0) {\n"
+             "        unresolvedGOT.delete(symName);\n"
+             "      } else {\n")
+replace_once(emscripten / "runtime_pthread.js",
+             "      } else if (msgData.target === 'setimmediate') {\n",
+             "      } else if (cmd === 'sharedModule') {\n"
+             "        sharedModules[msgData.libName] = msgData.module;\n"
+             "      } else if (msgData.target === 'setimmediate') {\n")
 # the sqlite3 recipe links Emscripten's single-threaded sqlite port by name, in
 # Pyodide's own recipes and in pyodide-recipes (build/threads/recipes) if there
 for recipes in [root / "packages", root.parent / "recipes" / "packages"]:
