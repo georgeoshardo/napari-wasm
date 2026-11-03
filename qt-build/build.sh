@@ -489,6 +489,11 @@ LDFLAGS
     # Install the import hook before the stdlib gets zipped
     log "Installing PyQt6 import hook..."
     cp "$PATCHES_DIR/pyqt6_import_hook.py" "$pyodide_lib/pyqt6_import_hook.py"
+    # PyQt6's pure-Python uic (pyqtgraph imports it), on the PyQt6 package's
+    # path (main.c)
+    rm -rf "$pyodide_lib/PyQt6"
+    mkdir -p "$pyodide_lib/PyQt6"
+    cp -R "$PYQT6_SRC/uic" "$pyodide_lib/PyQt6/uic"
     mkdir -p "$pyodide_lib/site-packages"
     local sitecustomize="$pyodide_lib/site-packages/sitecustomize.py"
     if ! grep -q "pyqt6_import_hook" "$sitecustomize" 2>/dev/null; then

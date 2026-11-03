@@ -401,6 +401,8 @@ extern PyObject *PyInit_QtOpenGLWidgets();
 extern PyObject *PyInit_QtPrintSupport();
 extern PyObject *PyInit_sip();
 
+#define PYQT6_PURE_PYTHON "/lib/python313.zip/PyQt6"
+
 /* Create a namespace package for PyQt6 */
 static struct PyModuleDef pyqt6_module_def = {
     PyModuleDef_HEAD_INIT,
@@ -413,8 +415,9 @@ static struct PyModuleDef pyqt6_module_def = {
 static PyObject *PyInit_PyQt6(void) {
     PyObject *mod = PyModule_Create(&pyqt6_module_def);
     if (mod == NULL) return NULL;
-    /* Set __path__ to make it a package */
-    PyObject *path = PyList_New(0);
+    /* Set __path__ to make it a package, with PyQt6's pure-Python modules
+       (uic), which are in the standard library's PyQt6/ */
+    PyObject *path = Py_BuildValue("[s]", PYQT6_PURE_PYTHON);
     if (path == NULL) { Py_DECREF(mod); return NULL; }
     PyObject_SetAttrString(mod, "__path__", path);
     Py_DECREF(path);
@@ -463,6 +466,24 @@ static void register_pyqt6_modules(void) {
         print("  Added QtPrintSupport to main.c")
     else:
         print("  main.c already patched")
+
+    text = main_c.read_text()
+    if "PYQT6_PURE_PYTHON" not in text:
+        # patched before PyQt6's package had a path
+        text = text.replace(
+            "/* Create a namespace package for PyQt6 */",
+            '#define PYQT6_PURE_PYTHON "/lib/python313.zip/PyQt6"\n\n'
+            "/* Create a namespace package for PyQt6 */",
+        )
+        text = text.replace(
+            "    /* Set __path__ to make it a package */\n"
+            "    PyObject *path = PyList_New(0);\n",
+            "    /* Set __path__ to make it a package, with PyQt6's pure-Python modules\n"
+            "       (uic), which are in the standard library's PyQt6/ */\n"
+            '    PyObject *path = Py_BuildValue("[s]", PYQT6_PURE_PYTHON);\n',
+        )
+        main_c.write_text(text)
+        print("  Put the standard library's PyQt6/ on PyQt6's path in main.c")
 
     # --- Patch Makefile.envs ---
     makefile_envs = pyodide_dir / "Makefile.envs"
