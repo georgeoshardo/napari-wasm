@@ -18,7 +18,8 @@ Usage: python threads/patch-pyodide.py <pyodide-dir> [<existing-emsdk-dir>]
   browser has control.
 - A package's libraries are loaded in an order where each comes after the ones
   it needs, so that each has its own dlopen, whose file the other threads load
-  from memory.
+  from memory, and Emscripten normalizes the paths it finds needed libraries at,
+  so that none is loaded twice.
 - The main module pre-starts a pool of workers, sized to the machine. Starting a
   thread waits for its worker, and a browser only starts a new worker once the
   main thread returns to the event loop, so a thread started while the main
@@ -244,6 +245,13 @@ replace_once(loader,
              "            ]\n"
              "        )\n"
              "    ]\n")
+# A library's needed libraries are looked for in its runtime path, e.g.
+# $ORIGIN/../google_crc32c.libs for one vendored into the wheel; Emscripten
+# leaves the ".." in the path it finds, so the library it names is taken for one
+# not loaded yet and loaded again, as a dependency, which threads can't do.
+replace_once(root / "emsdk" / "emsdk" / "upstream" / "emscripten" / "src" / "lib" / "libdylink.js",
+             "      return rpath.replace('$ORIGIN', origin);\n",
+             "      return PATH.normalize(rpath.replace('$ORIGIN', origin));\n")
 # the sqlite3 recipe links Emscripten's single-threaded sqlite port by name, in
 # Pyodide's own recipes and in pyodide-recipes (build/threads/recipes) if there
 for recipes in [root / "packages", root.parent / "recipes" / "packages"]:
