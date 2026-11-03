@@ -58,10 +58,13 @@ def replace(path, old, new, count=1):
 
 
 # mio: its poll(2) selector and pipe waker (cfg flags in RUSTFLAGS), and
-# accept4 as on Linux
+# pipe2 and accept4 as on Linux
 replace(mio / "src/lib.rs",
         '#[cfg(all(target_family = "wasm", not(target_os = "wasi")))]',
         '#[cfg(all(target_family = "wasm", not(target_os = "wasi"), not(target_os = "emscripten")))]')
+replace(mio / "src/sys/unix/pipe.rs",
+        '        target_os = "linux",\n        target_os = "netbsd",',
+        '        target_os = "linux",\n        target_os = "emscripten",\n        target_os = "netbsd",')
 replace(mio / "src/sys/unix/tcp.rs",
         '        target_os = "linux",\n        target_os = "netbsd",',
         '        target_os = "linux",\n        target_os = "emscripten",\n        target_os = "netbsd",')
@@ -109,6 +112,33 @@ replace(runtime_crate, '  "clipboard",\n', "")
 replace(runtime_crate, '  "fast_alloc",\n', "")
 for path in [python_crate, runtime_crate]:
     replace(path, '"abi3-py310", ', "")
+# polars runs on one thread on Emscripten, which has had no threads; here it
+# has its usual pool
+replace(src / "crates/polars-core/src/runtime.rs",
+        """#[cfg(all(target_os = "emscripten", target_family = "wasm"))] // Use 1 rayon thread on emscripten
+pub static THREAD_POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
+    ThreadPoolBuilder::new()
+        .num_threads(1)
+        .use_current_thread()
+        .build()
+        .expect("could not create pool")
+});""",
+        """#[cfg(all(target_os = "emscripten", target_family = "wasm"))]
+pub static THREAD_POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
+    let thread_name = std::env::var("POLARS_THREAD_NAME").unwrap_or_else(|_| "polars".to_string());
+    ThreadPoolBuilder::new()
+        .num_threads(polars_config::config().max_threads())
+        .thread_name(move |i| format!("{thread_name}-{i}"))
+        .build()
+        .expect("could not spawn threads")
+});""")
+# the runtime records its target features for an import-time check against the
+# x86 CPU; WebAssembly's (atomics, bulk memory) are the browser's to provide
+replace(src / "py-polars/runtime/polars-runtime-32/build.rs",
+        '            if opt == "target-feature" {',
+        '            if opt == "target-feature"\n'
+        '                && std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() != Ok("wasm32")\n'
+        '            {')
 EOF
 
 source "$ROOT/threads/env.sh"
