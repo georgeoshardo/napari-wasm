@@ -30,8 +30,6 @@
   </div>
 
   <script type="module">
-    import { loadPyodide } from "./qt-build/build/sources/pyodide/dist/pyodide.mjs";
-
     const statusEl = document.getElementById("status");
     window.napariStatus = (text) => { statusEl.textContent = text; console.log(text); };
     window.napariReady = () => document.getElementById("loading").remove();
@@ -45,10 +43,35 @@
     window.addEventListener("error", (event) => fail(event.error ?? event.message));
     window.addEventListener("unhandledrejection", (event) => fail(event.reason));
 
+    // Python's threads are WebAssembly threads, which need shared memory, which
+    // browsers only allow on a cross-origin isolated page. GitHub Pages can't
+    // send the headers for that, so a service worker (isolation.js) adds them,
+    // after one reload.
+    async function isolate() {
+      if (self.crossOriginIsolated) {
+        sessionStorage.removeItem("isolation-reload");
+        return;
+      }
+      if (!navigator.serviceWorker) {
+        throw new Error("This browser doesn't allow service workers here, which the page needs for threads.");
+      }
+      await navigator.serviceWorker.register("./isolation.js");
+      await navigator.serviceWorker.ready;
+      if (sessionStorage.getItem("isolation-reload")) {
+        sessionStorage.removeItem("isolation-reload");
+        throw new Error("The page couldn't be cross-origin isolated, which threads need.");
+      }
+      sessionStorage.setItem("isolation-reload", "1");
+      location.reload();
+      await new Promise(() => {});
+    }
+
     try {
+      await isolate();
+      const dist = "./build/threads/pyodide/dist/";
+      const { loadPyodide } = await import(`${dist}pyodide.mjs`);
       const pyodide = await loadPyodide({
-        indexURL: new URL("./qt-build/build/sources/pyodide/dist/", location.href).href,
-        lockFileURL: new URL("./web/pyodide-lock.json", location.href).href,
+        indexURL: new URL(dist, location.href).href,
         stdout: (text) => console.log(text),
         stderr: (text) => console.warn(text),
       });

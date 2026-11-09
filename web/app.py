@@ -8,7 +8,12 @@ import wasm_shims
 base = js.location.href.split("?")[0].split("#")[0].rsplit("/", 1)[0]
 
 js.napariStatus("Installing napari")
-await wasm_shims.install_napari(f"{base}/web/wheels")  # noqa: F704 -- index.html runs this with top-level await
+await wasm_shims.install_napari(  # noqa: F704 -- index.html runs this with top-level await
+    f"{base}/web/wheels",
+    # the pydantic of the threaded build's pydantic-core
+    constraints=["pydantic==2.13.5"],
+    console=True,
+)
 
 js.napariStatus("Starting napari")
 os.environ["QT_API"] = "pyqt6"
