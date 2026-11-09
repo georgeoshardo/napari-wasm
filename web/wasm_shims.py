@@ -41,6 +41,11 @@ the browser build rather than changing behaviour:
 * Emscripten's file system has no hard links, which zarr's local store moves a
   file with when it mustn't replace one; the file it moves to is created
   exclusively instead, and the file renamed over it.
+* When a dock moves, napari's dock widget deletes its old title bar by sending
+  every deletion pending in the app. In a tab move made from code (mm_track's
+  default layout) that frees a tab bar Qt's dock layout is still using, which
+  the browser's allocator reuses at once, so the next use traps. Only the title
+  bar's deletion is sent.
 """
 
 from __future__ import annotations
@@ -66,6 +71,7 @@ def install():
     _install_inprocess_kernel_dispatch()
     _configure_thread_pools()
     _install_zarr_exclusive_moves()
+    _install_title_bar_deletion()
 
 
 def _after_import(name, patch):
@@ -109,6 +115,27 @@ def _install_zarr_exclusive_moves():
         local._safe_move = safe_move
 
     _after_import("zarr.storage._local", patch)
+
+
+def _install_title_bar_deletion():
+    import inspect
+    import textwrap
+
+    def patch(dock_widget):
+        cls = dock_widget.QtViewerDockWidget
+        source = textwrap.dedent(inspect.getsource(cls._update_title_bar))
+        every_deletion = "None, QEvent.Type.DeferredDelete"
+        if source.count(every_deletion) != 1:
+            raise RuntimeError(f"napari's _update_title_bar no longer sends {every_deletion!r}")
+        namespace = {}
+        exec(
+            source.replace(every_deletion, "old_title, QEvent.Type.DeferredDelete"),
+            vars(dock_widget),
+            namespace,
+        )
+        cls._update_title_bar = namespace["_update_title_bar"]
+
+    _after_import("napari._qt.widgets.qt_viewer_dock_widget", patch)
 
 
 # --- Qt threads ---------------------------------------------------------------
